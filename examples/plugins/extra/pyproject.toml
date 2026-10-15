@@ -1,0 +1,19 @@
+[project]
+name = "typebind-example-extra"
+version = "0.1.0"
+description = "Local typebind discovery example; not intended for publication."
+requires-python = ">=3.14"
+dependencies = ["typebind>=0.1.0", "typebind-example-core==0.1.0"]
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14"]
+build-backend = "uv_build"
+
+[project.entry-points."typebind.example.extensions"]
+query = "typebind_example_extra:Write"
+
+[project.entry-points."typebind.example.storage"]
+write = "typebind_example_extra:Write"
+
+[project.entry-points."typebind.example.behaviors"]
+write = "typebind_example_extra:WriteObject"

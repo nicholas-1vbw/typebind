@@ -1,0 +1,124 @@
+[project]
+name = "typebind"
+version = "0.1.0"
+description = "Typed Pydantic model families, plugin discovery, and scoped behavior adapters."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["pydantic", "discriminator", "generics", "plugins", "adapters"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.14.1,<2.15",
+    "pydantic-core>=2.50.1",
+    "typing-extensions>=4.15",
+]
+
+[project.urls]
+Homepage = "https://github.com/nicholas-1vbw/typebind"
+Repository = "https://github.com/nicholas-1vbw/typebind"
+Issues = "https://github.com/nicholas-1vbw/typebind/issues"
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv]
+required-version = "==0.13.0"
+build-constraint-dependencies = ["uv_build==0.13.0"]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*" }, { file = "README.md" }, { file = "LICENSE" }]
+
+[tool.uv.build-backend]
+source-include = ["tests/**", "examples/**", "benchmarks/**", "scripts/**", "docs/**", "uv.lock", ".python-version"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14",
+    "pyright>=1.1.400",
+    "pytest>=8.4",
+    "pytest-cov>=6",
+    "pytest-timeout>=2.3",
+    "poethepoet>=0.48.0",
+    "twine>=6.2",
+    "typebind-example-core",
+    "typebind-example-extra",
+]
+
+[tool.uv.sources]
+typebind-example-core = { path = "examples/plugins/core", editable = true }
+typebind-example-extra = { path = "examples/plugins/extra", editable = true }
+
+[tool.poe.executor]
+type = "uv"
+no-sync = true
+
+[tool.poe.tasks.check]
+help = "Run style, strict typing, tests, examples and artifact verification"
+sequence = ["format-check", "lint", "typecheck", "test", "example", "build", "check-dist"]
+
+[tool.poe.tasks.format-check]
+cmd = "ruff format --check ."
+
+[tool.poe.tasks.lint]
+cmd = "ruff check ."
+
+[tool.poe.tasks.typecheck]
+cmd = "pyright"
+
+[tool.poe.tasks.test]
+cmd = "pytest --cov"
+
+[tool.poe.tasks.example]
+help = "Run model, manual assembly and installed-plugin discovery examples"
+sequence = ["example-models", "example-manual", "example-discovery"]
+
+[tool.poe.tasks.example-models]
+cmd = "python examples/models.py"
+
+[tool.poe.tasks.example-manual]
+cmd = "python examples/manual.py"
+
+[tool.poe.tasks.example-discovery]
+cmd = "python examples/discovery.py"
+
+[tool.poe.tasks.benchmark]
+help = "Report adaptation microbenchmarks; not a service load test"
+cmd = "python benchmarks/behavior.py"
+
+[tool.poe.tasks.build]
+cmd = "uv build --no-sources"
+executor = "simple"
+
+[tool.poe.tasks.check-dist]
+cmd = "python scripts/check_dist.py"
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+include = ["src", "tests", "examples", "benchmarks", "scripts"]
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib", "--strict-markers", "--strict-config"]
+timeout = 30
+markers = ["integration: exercises installed distributions and native entry points"]
+
+[tool.coverage.run]
+branch = true
+source = ["typebind"]
+
+[tool.coverage.report]
+show_missing = true

@@ -1,0 +1,20 @@
+[project]
+name = "typebind-example-core"
+version = "0.1.0"
+description = "Local typebind discovery example; not intended for publication."
+requires-python = ">=3.14"
+dependencies = ["typebind>=0.1.0"]
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14"]
+build-backend = "uv_build"
+
+[project.entry-points."typebind.example.extensions"]
+query = "typebind_example_core:Query"
+template = "typebind_example_core:BasicTemplate"
+
+[project.entry-points."typebind.example.storage"]
+query = "typebind_example_core:Query"
+
+[project.entry-points."typebind.example.behaviors"]
+query = "typebind_example_core:QueryObject"
