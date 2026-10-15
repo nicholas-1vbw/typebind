@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from inspect import isabstract
-from typing import Annotated, Any, Self, TypeVar, cast
+from typing import Annotated, Any, ClassVar, Self, TypeVar, cast
 
 from pydantic import (
     BaseModel,
@@ -15,22 +15,27 @@ from pydantic import (
     model_validator,
 )
 from pydantic.fields import FieldInfo
-from pydantic_core import CoreSchema
-
-_TAG_DEFAULT = object()
+from pydantic_core import CoreSchema, core_schema
 
 
 def _tag_default() -> object:
-    """Return the sentinel used for native default comparison and validation guards."""
-    return _TAG_DEFAULT
+    """Identify tag declarations; unchecked construction must supply tags itself."""
+    raise ValueError(
+        "Automatic tag defaults were not compiled. "
+        "When using model_construct(), supply tags explicitly. "
+        "If overriding __get_pydantic_core_schema__, preserve the "
+        "DiscriminatedModel schema hook by calling super()."
+    )
 
 
 def tag_field() -> Any:
     """Declare this level's discriminator as a native frozen Pydantic field.
 
     The private default factory identifies tag fields after native field merging
-    and generic substitution. Validation supplies concrete tags before field
-    validators run. Its sentinel keeps bound tags in exclude_defaults output.
+    and generic substitution. Schema generation replaces it with a validated
+    native default for bound tags, or a required field for open tags.
+    DiscriminatedModel keeps native unset semantics; IdentityDiscriminatedModel
+    additionally marks bound tags as set through a public after-validator.
 
     Like Pydantic's Field, this helper returns Any for assignment to a typed
     field. The explicit annotation owns the field and constructor argument types;
@@ -67,24 +72,57 @@ def _open_discriminator(model: type[DiscriminatedModel]) -> str | None:
 
 
 def _literal_tag(model: type[DiscriminatedModel], name: str) -> str:
-    """Resolve a Literal or its alias to one non-empty string tag.
-
-    Pydantic resolves the annotation. Raise TypeError if its schema does not
-    describe exactly one non-empty string literal.
-    """
+    """Resolve the authoritative field through Pydantic at declaration/assembly time."""
     annotation = model.model_fields[name].annotation
-    message = (
+    schema = TypeAdapter(cast(Any, annotation)).core_schema
+    if schema["type"] == "literal" and len(schema["expected"]) == 1:
+        value: object = schema["expected"][0]
+        if isinstance(value, str) and value:
+            return value
+    raise TypeError(
         f"{_model_name(model)}.{name}: a tag must be a single non-empty string Literal; "
         f"got {annotation!r}. Select a tag with Family[Literal['tag']]."
     )
-    # Let Pydantic resolve native typing forms, including named Literal aliases.
-    schema = TypeAdapter(cast(Any, annotation)).core_schema
-    if schema["type"] != "literal" or len(schema["expected"]) != 1:
-        raise TypeError(message)
-    value: object = schema["expected"][0]
-    if not isinstance(value, str) or not value:
-        raise TypeError(message)
-    return value
+
+
+def _with_tag_defaults(schema: CoreSchema, model: type[DiscriminatedModel]) -> CoreSchema:
+    """Compile defaults on this model's fields, preserving Pydantic's validator wrappers.
+
+    Copy only the model spine and marked fields during schema generation. Payload
+    schemas and referenced models retain their native definitions. Reference nodes
+    already point to schemas built by the referenced model's own hook.
+    """
+    if schema["type"] == "model-fields":
+        inner = schema
+        fields = dict(inner["fields"])
+        for name, field in _tag_fields(model).items():
+            original = fields[name]["schema"]
+            # Pydantic can hand the hook an existing schema when embedding a model.
+            if original["type"] != "default":
+                continue
+            default = cast(core_schema.WithDefaultSchema, original)
+            if default.get("default_factory") is not _tag_default:
+                continue
+            resolved = default["schema"]
+            if not _is_open_tag(field.annotation):
+                resolved = core_schema.with_default_schema(
+                    resolved, default=_literal_tag(model, name), validate_default=True
+                )
+            fields[name] = {**fields[name], "schema": resolved}
+        return {**inner, "fields": fields}
+    if schema["type"] == "model":
+        return {**schema, "schema": _with_tag_defaults(schema["schema"], model)}
+    if schema["type"] in ("function-before", "function-after", "function-wrap"):
+        wrapper = cast(
+            core_schema.BeforeValidatorFunctionSchema
+            | core_schema.AfterValidatorFunctionSchema
+            | core_schema.WrapValidatorFunctionSchema,
+            schema,
+        )
+        updated = wrapper.copy()
+        updated["schema"] = _with_tag_defaults(wrapper["schema"], model)
+        return updated
+    return schema
 
 
 class DiscriminatedModel(BaseModel):
@@ -97,47 +135,28 @@ class DiscriminatedModel(BaseModel):
 
     These hooks validate declarations without storing a second tag definition;
     Pydantic owns generic class creation and field substitution. Polymorphic dispatch is provided by
-    ``build_adapter``, not by direct validation of the family model.
+    ``build_adapter``, not by direct validation of the family model. Omitted tag
+    defaults remain unset, as in BaseModel. Choose IdentityDiscriminatedModel at
+    the family root to retain bound tags in exclude_unset exports instead.
     """
 
-    @model_validator(mode="before")
     @classmethod
-    def _resolve_tag_defaults(cls, value: object) -> object:
-        """Supply missing fixed tags before field validation without mutating input.
+    def __get_pydantic_core_schema__(
+        cls, source: type[BaseModel], handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        """Derive native defaults from specialized fields before schema compilation.
 
-        Copy mapping inputs only when adding tags; preserve explicit values so
-        ordinary field validation can reject incorrect tags. Non-mapping inputs
-        pass through unchanged. An open discriminator has no default and must be
-        present when validating the family directly.
+        Pydantic owns validation, serialization, and generic substitution. Bound
+        defaults validate like explicit inputs; open tags remain required.
+        Omitted defaults retain native unset semantics. No marking validator or
+        runtime policy branch is registered by this base. The hook never mutates
+        model_fields or an already compiled validator/serializer.
         """
-        if not isinstance(value, Mapping):
-            return value
-        data = cast(Mapping[str, object], value)
-        missing: dict[str, str] = {}
-        for name, field in _tag_fields(cls).items():
-            if name not in data:
-                if _is_open_tag(field.annotation):
-                    raise ValueError("An unbound discriminator has no default tag")
-                missing[name] = _literal_tag(cls, name)
-        return {**missing, **data} if missing else data
-
-    @model_validator(mode="after")
-    def _reject_unresolved_tags(self) -> Self:
-        """Reject unresolved defaults on validation paths that do not supply mappings.
-
-        Attribute inputs must provide their tag attributes. Pydantic normally
-        skips validation of factory defaults, so our internal marker needs this
-        check before any successfully validated model can escape to a caller.
-        Unchecked model_construct remains outside the validation contract.
-        """
-        for name in _tag_fields(type(self)):
-            if getattr(self, name, _TAG_DEFAULT) is _TAG_DEFAULT:
-                raise ValueError(f"Discriminator {name!r} requires an explicit tag for this input")
-        return self
+        return _with_tag_defaults(handler(source), cls)
 
     @classmethod
     def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
-        """Check native fields and inheritance without retaining derived class state.
+        """Check native fields and inheritance without retaining a second tag definition.
 
         Native specializations either bind one Literal tag or remain open views.
         Named subclasses preserve fixed ancestor tags and optionally declare a
@@ -251,6 +270,37 @@ class DiscriminatedModel(BaseModel):
                 f"freezing, aliases, or exclusion. Unsupported settings: {', '.join(unsupported)}. "
                 "Remove those overrides or keep the inherited tag field."
             )
+
+
+class IdentityDiscriminatedModel(DiscriminatedModel):
+    """Treat bound discriminator tags as set identity fields, even when omitted.
+
+    Choose this base when exclude_unset exports must retain routing tags. It adds
+    one public after-validator; ordinary defaults and other exclusion options
+    keep native semantics. Validator ordering follows Pydantic's native MRO.
+    The derived name tuple contains no tag values and is refreshed on schema
+    generation/rebuild; model_fields remains the authoritative declaration.
+    """
+
+    # Derived from model_fields whenever this model's schema is generated.
+    _bound_tag_names: ClassVar[tuple[str, ...]] = ()
+
+    @model_validator(mode="after")
+    def _mark_bound_tags(self) -> Self:
+        """Mark type identity using public APIs; repeated nested validation is idempotent."""
+        self.model_fields_set.update(type(self)._bound_tag_names)
+        return self
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source: type[BaseModel], handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        """Compile native defaults and derive the names needed by the identity marker."""
+        schema = super().__get_pydantic_core_schema__(source, handler)
+        cls._bound_tag_names = tuple(
+            name for name, field in _tag_fields(cls).items() if not _is_open_tag(field.annotation)
+        )
+        return schema
 
 
 def _branches(

@@ -4,6 +4,11 @@
 `build_adapter`, `bind_variants`, and `assemble` APIs used by manual composition.
 It is optional; installing a plugin does not change an existing adapter.
 
+The core plugin example uses `IdentityDiscriminatedModel` for messages and
+`DiscriminatedModel` for templates. Discovery and behavior assembly accept both
+through their shared base; the choice only changes automatic identity marking
+and unset exports. See [model export policies](models.md#choosing-export-semantics).
+
 ## Run the cross-package example
 
 From the repository root:

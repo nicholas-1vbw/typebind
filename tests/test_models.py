@@ -1,25 +1,46 @@
 """Exercise declarations, dispatch, isolation, and serialization boundaries."""
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Annotated, Any, Literal, assert_type, cast, get_type_hints
+from typing import Annotated, Any, Literal, Self, assert_type, cast, get_type_hints
+from uuid import UUID
 
 import pytest
 from pydantic import (
     BaseModel,
     Field,
+    GetCoreSchemaHandler,
+    ModelWrapValidatorHandler,
     PydanticUserError,
     TypeAdapter,
     ValidationError,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
+from pydantic_core import CoreSchema
 
-from typebind import DiscriminatedModel, bind_variants, build_adapter, tag_field
+from typebind import (
+    DiscriminatedModel,
+    IdentityDiscriminatedModel,
+    bind_variants,
+    build_adapter,
+    tag_field,
+)
 
 type QueryTag = Literal["query"]
+type NestedQueryTag = QueryTag
 
 
-class Message[Kind: str](DiscriminatedModel):
+class FirstTags:
+    type Tag = Literal["first"]
+
+
+class SecondTags:
+    type Tag = Literal["second"]
+
+
+class Message[Kind: str](IdentityDiscriminatedModel):
     kind: Kind = tag_field()
     identifier: str
 
@@ -278,7 +299,7 @@ def test_variant_bindings_are_explicit_independent_snapshots() -> None:
 
 
 def test_recursive_family_fields() -> None:
-    class Node[Kind: str](DiscriminatedModel):
+    class Node[Kind: str](IdentityDiscriminatedModel):
         kind: Kind = tag_field()
         label: str
 
@@ -301,7 +322,7 @@ def test_recursive_family_fields() -> None:
 def test_model_validators_are_not_duplicated() -> None:
     from typing import Self
 
-    class Checked[Kind: str](DiscriminatedModel):
+    class Checked[Kind: str](IdentityDiscriminatedModel):
         kind: Kind = tag_field()
         value: int
 
@@ -321,7 +342,7 @@ def test_model_validators_are_not_duplicated() -> None:
 def test_independent_families_and_missing_wrapped_family() -> None:
     from typing import Self
 
-    class Separate[Kind: str](DiscriminatedModel):
+    class Separate[Kind: str](IdentityDiscriminatedModel):
         kind: Kind = tag_field()
         value: int
 
@@ -373,7 +394,7 @@ def test_native_specialization_cache_and_family_fields_remain_unbound() -> None:
     assert Query.model_validate({"identifier": "q", "sequence": 1, "expression": "x"}).kind == (
         "request"
     )
-    with pytest.raises(ValidationError, match="unbound discriminator"):
+    with pytest.raises(ValidationError, match="Field required"):
         Message[Any](identifier="unbound")
 
 
@@ -401,21 +422,21 @@ def test_unbound_containers_are_not_transparently_rewritten() -> None:
 def test_discriminator_fields_require_validated_frozen_defaults() -> None:
     with pytest.raises(TypeError, match="declare its discriminator with tag_field"):
 
-        class RequiredTag[Kind: str](DiscriminatedModel):
+        class RequiredTag[Kind: str](IdentityDiscriminatedModel):
             kind: Kind
 
         assert issubclass(RequiredTag, DiscriminatedModel)
 
     with pytest.raises(TypeError, match="declare its discriminator with tag_field"):
 
-        class MutableTag[Kind: str](DiscriminatedModel):
+        class MutableTag[Kind: str](IdentityDiscriminatedModel):
             kind: Kind = Field()
 
         assert issubclass(MutableTag, DiscriminatedModel)
 
     with pytest.raises(TypeError, match="str-bound type parameter") as error:
 
-        class Unbounded[Tag](DiscriminatedModel):
+        class Unbounded[Tag](IdentityDiscriminatedModel):
             kind: Tag = tag_field()
 
         assert issubclass(Unbounded, DiscriminatedModel)
@@ -436,7 +457,7 @@ def test_named_literal_type_aliases_use_native_resolution() -> None:
 
 
 def test_automatic_defaults_reach_inherited_field_validators_as_strings() -> None:
-    class Normalized[Kind: str](DiscriminatedModel):
+    class Normalized[Kind: str](IdentityDiscriminatedModel):
         kind: Kind = tag_field()
 
         @field_validator("kind", mode="before")
@@ -455,7 +476,7 @@ def test_automatic_defaults_reach_inherited_field_validators_as_strings() -> Non
     assert Item.model_validate_json('{"value":1}') == item
     assert item.model_fields_set == {"kind", "value"}
     assert item.model_dump(exclude_unset=True) == {"kind": "item", "value": 1}
-    assert item.model_dump(exclude_defaults=True) == {"kind": "item", "value": 1}
+    assert item.model_dump(exclude_defaults=True) == {"value": 1}
     adapter = TypeAdapter(Item)
     wire = adapter.dump_json(item, exclude_defaults=True)
     assert adapter.validate_json(wire) == item
@@ -466,11 +487,12 @@ def test_automatic_defaults_reach_inherited_field_validators_as_strings() -> Non
 
 
 @pytest.mark.parametrize("tags", [{}, {"kind": "request"}, {"method": "query"}])
-def test_missing_attribute_tags_cannot_leak_default_markers(tags: dict[str, str]) -> None:
+def test_attribute_inputs_use_native_tag_defaults(tags: dict[str, str]) -> None:
     attributes = SimpleNamespace(identifier="q", sequence=1, expression="x", **tags)
-    with pytest.raises(ValidationError, match="requires an explicit tag"):
-        Query.model_validate(attributes, from_attributes=True)
-    with pytest.raises(ValidationError, match="requires an explicit tag"):
+    assert Query.model_validate(attributes, from_attributes=True) == Query(
+        identifier="q", sequence=1, expression="x"
+    )
+    with pytest.raises(ValidationError, match="Field required"):
         Message[Any].model_validate(SimpleNamespace(identifier="q"), from_attributes=True)
 
 
@@ -503,7 +525,7 @@ def test_conditional_tag_exclusion_is_rejected_at_declaration() -> None:
 
     with pytest.raises(TypeError, match="aliases, or exclusion") as error:
 
-        class HiddenTag[Kind: str](DiscriminatedModel):
+        class HiddenTag[Kind: str](IdentityDiscriminatedModel):
             kind: Annotated[Kind, Field(exclude_if=omit_tag)] = tag_field()
 
         assert issubclass(HiddenTag, DiscriminatedModel)
@@ -527,7 +549,7 @@ def test_tag_field_is_the_single_source_of_the_discriminator() -> None:
     assert Ping.model_fields["operation"].frozen is True
     adapter = build_adapter(Packet[Any], variants=[Ping])
     assert adapter.json_schema()["discriminator"]["propertyName"] == "operation"
-    assert adapter.validate_json(adapter.dump_json(ping, exclude_defaults=True)) == ping
+    assert adapter.validate_json(adapter.dump_json(ping)) == ping
     with pytest.raises(ValidationError, match="extra_forbidden"):
         Ping.model_validate({"payload": "hello", "extra": 1})
 
@@ -535,7 +557,7 @@ def test_tag_field_is_the_single_source_of_the_discriminator() -> None:
 def test_multiple_new_tag_fields_are_rejected() -> None:
     with pytest.raises(TypeError, match="exactly one new tag_field") as error:
 
-        class Ambiguous[Tag: str](DiscriminatedModel):
+        class Ambiguous[Tag: str](IdentityDiscriminatedModel):
             kind: Tag = tag_field()
             method: Tag = tag_field()
 
@@ -554,7 +576,7 @@ def test_inherited_tag_defaults_and_freezing_cannot_be_removed() -> None:
 def test_tag_field_requires_a_generic_discriminator() -> None:
     with pytest.raises(TypeError, match="str-bound type parameter"):
 
-        class ConcreteTag(DiscriminatedModel):
+        class ConcreteTag(IdentityDiscriminatedModel):
             kind: Literal["concrete"] = tag_field()
 
         assert issubclass(ConcreteTag, DiscriminatedModel)
@@ -568,10 +590,10 @@ def test_inherited_leaf_defaults_and_dispatch_match_native_field_schema(
         description: str
 
     item = DetailedStream(identifier="s", sequence=1, size=2, cursor="next", description="detail")
-    data = item.model_dump(exclude_defaults=True)
+    data = item.model_dump()
     properties = DetailedStream.model_json_schema()["properties"]
     for name in ("kind", "method", "mode"):
-        assert data[name] == properties[name]["const"]
+        assert data[name] == properties[name]["const"] == properties[name]["default"]
     adapter = build_adapter(family, variants=[DetailedStream])
     restored = adapter.validate_python(data)
     assert type(restored) is DetailedStream
@@ -639,3 +661,347 @@ def test_removed_inherited_tag_reports_its_declaration() -> None:
     assert "RemovedTag.kind:" in str(error.value)
     assert f"{Query.__module__}.{Query.__qualname__}" in str(error.value)
     assert "Keep the inherited model field" in str(error.value)
+
+
+def test_construction_does_not_scan_or_resolve_tag_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    class AliasQuery(Request[NestedQueryTag]):
+        expression: str
+
+    variants = [Query, Stream, AliasQuery]
+    samples = [
+        Query(identifier="q", sequence=1, expression="x"),
+        Stream(identifier="s", sequence=1, size=2, cursor="next"),
+        AliasQuery(identifier="a", sequence=1, expression="alias"),
+    ]
+    adapters = [build_adapter(Message[Any], variants=[variant]) for variant in variants]
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("Repeated construction must not compile tag schemas")
+
+    with pytest.raises(ValueError, match="Duplicate tag 'query'"):
+        bind_variants([Query, AliasQuery])
+    monkeypatch.setattr("typebind._models.TypeAdapter", forbidden)
+    monkeypatch.setattr("typebind._models._tag_fields", forbidden)
+    monkeypatch.setattr("typebind._models._literal_tag", forbidden)
+    for _ in range(5):
+        for sample, adapter in zip(samples, adapters, strict=True):
+            data = sample.model_dump(exclude={"kind", "method", "mode"})
+            assert type(sample)(**data) == sample
+            assert adapter.validate_json(adapter.dump_json(sample, warnings="error")) == sample
+
+
+def test_native_defaults_preserve_alias_identity() -> None:
+    # Equal alias names in independent scopes must not conflate their values.
+    class FirstItem(Message[FirstTags.Tag]):
+        pass
+
+    class SecondItem(Message[SecondTags.Tag]):
+        pass
+
+    first_model, second_model = FirstItem, SecondItem
+    adapter = build_adapter(Message[Any], variants=[first_model, second_model, Query])
+    expected = [first_model(identifier="a"), second_model(identifier="b")]
+    for model, item, tag in zip(
+        (first_model, second_model), expected, ("first", "second"), strict=True
+    ):
+        restored = adapter.validate_json(adapter.dump_json(item, warnings="error"))
+        assert type(restored) is model
+        assert restored == model(identifier=item.model_dump()["identifier"])
+        assert restored.model_dump()["kind"] == tag
+    query = Query(identifier="q", sequence=1, expression="x")
+    assert adapter.validate_json(adapter.dump_json(query)) == query
+    with pytest.raises(ValidationError, match="literal_error"):
+        Query.model_validate({**query.model_dump(), "method": "wrong"})
+
+
+def test_json_contract_restores_nested_payloads_and_rejects_unknown_tags() -> None:
+    class Record(Message[Literal["record"]]):
+        created_at: datetime
+        record_id: UUID
+
+    binding = bind_variants([Record, Ping])
+
+    class Envelope(BaseModel):
+        records: list[Annotated[Message[Any], binding]]
+
+    record = Record(
+        identifier="r",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        record_id=UUID("12345678-1234-5678-1234-567812345678"),
+    )
+    envelope = Envelope(records=[record, Ping(identifier="p")])
+    wire = envelope.model_dump_json(warnings="error")
+    restored = Envelope.model_validate_json(wire)
+    assert restored == envelope
+    assert type(restored.records[0]) is Record
+    assert type(restored.records[1]) is Ping
+    assert restored.records[0].created_at == record.created_at
+    assert restored.records[0].record_id == record.record_id
+    data = envelope.model_dump(mode="json", warnings="error")
+    assert isinstance(data["records"][0]["created_at"], str)
+    assert isinstance(data["records"][0]["record_id"], str)
+    assert Envelope.model_validate(data) == envelope
+    adapter = build_adapter(Message[Any], variants=[Record, Ping])
+    assert type(adapter.validate_json(adapter.dump_json(record))) is Record
+    limited = build_adapter(Message[Any], variants=[Ping])
+    with pytest.raises(ValidationError, match="union_tag_invalid"):
+        limited.validate_json(adapter.dump_json(record))
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+def test_native_defaults_survive_recursive_and_deferred_rebuild(deferred: bool) -> None:
+    class Tree(Message[Literal["tree"]], defer_build=deferred):
+        children: list["Tree"] = Field(default_factory=lambda: list[Tree]())
+
+    assert Tree.model_rebuild(force=True)
+    tree = Tree.model_validate({"identifier": "root", "children": [{"identifier": "child"}]})
+    assert tree.kind == tree.children[0].kind == "tree"
+    assert Tree.model_validate_json(tree.model_dump_json()) == tree
+    adapter = build_adapter(Message[Any], variants=[Tree])
+    assert adapter.validate_json(adapter.dump_json(tree)) == tree
+    assert Tree.model_rebuild(force=True)
+    assert Tree(identifier="new").kind == "tree"
+    assert adapter.rebuild(force=True)
+    assert adapter.validate_json(adapter.dump_json(tree, exclude_unset=True)) == tree
+    assert Tree.model_validate_json(tree.model_dump_json(exclude_unset=True)) == tree
+    assert {"kind"} <= tree.model_fields_set
+    assert {"kind"} <= tree.children[0].model_fields_set
+
+
+def test_defaults_preserve_validator_order_context_and_single_execution() -> None:
+    events: list[str] = []
+
+    class Checked[Kind: str](IdentityDiscriminatedModel):
+        kind: Kind = tag_field()
+
+        @model_validator(mode="before")
+        @classmethod
+        def before(cls, value: object) -> object:
+            events.append("before")
+            return value
+
+        @field_validator("kind", mode="before")
+        @classmethod
+        def field_before(cls, value: str, info: ValidationInfo) -> str:
+            assert value == "checked"
+            assert info.context == {"probe": True}
+            events.append("field")
+            return value
+
+        @model_validator(mode="after")
+        def after(self) -> "Checked[Kind]":
+            assert "kind" in self.model_fields_set
+            events.append("after")
+            return self
+
+        @model_validator(mode="wrap")
+        @classmethod
+        def wrap(
+            cls, value: object, handler: ModelWrapValidatorHandler["Checked[Kind]"]
+        ) -> "Checked[Kind]":
+            events.append("enter")
+            result = handler(value)
+            events.append("exit")
+            return result
+
+    class Item(Checked[Literal["checked"]]):
+        pass
+
+    for data in ({}, {"kind": "checked"}):
+        events.clear()
+        item = Item.model_validate(data, context={"probe": True})
+        assert item.kind == "checked"
+        assert events == ["enter", "before", "field", "after", "exit"]
+
+
+def test_normal_dumps_keep_tags_and_lossy_dumps_do_not_dispatch() -> None:
+    query = Query(identifier="q", sequence=1, expression="x")
+    adapter = build_adapter(Message[Any], variants=VARIANTS)
+    document = Document(primary=query, requests=[query], by_name={"q": query})
+    data = document.model_dump()
+    for nested in (data["primary"], data["requests"][0], data["by_name"]["q"]):
+        assert nested["kind"] == "request"
+        assert nested["method"] == "query"
+    assert Document.model_validate_json(document.model_dump_json()) == document
+    assert adapter.dump_python(query)["method"] == "query"
+    assert adapter.validate_json(adapter.dump_json(query)) == query
+    assert query.model_fields_set == {"kind", "method", "identifier", "sequence", "expression"}
+    assert adapter.validate_json(adapter.dump_json(query, exclude_unset=True)) == query
+    for wire in (
+        adapter.dump_json(query, exclude_defaults=True),
+        adapter.dump_json(query, exclude={"kind"}),
+    ):
+        with pytest.raises(ValidationError, match="union_tag_not_found"):
+            adapter.validate_json(wire)
+        # A concrete model already identifies its type and can restore its defaults.
+        assert Query.model_validate_json(wire) == query
+    explicit = Query(kind="request", method="query", identifier="q", sequence=1, expression="x")
+    assert {"kind", "method"} <= explicit.model_fields_set
+    assert explicit.model_dump(exclude_unset=True)["kind"] == "request"
+    assert "kind" not in explicit.model_dump(exclude_defaults=True)
+
+
+def test_unchecked_construction_requires_explicit_tags_without_leaking_markers() -> None:
+    with pytest.raises(ValueError, match=r"model_construct\(\), supply tags explicitly"):
+        Query.model_construct(identifier="q", sequence=1, expression="x")
+    query = Query.model_construct(
+        kind="request", method="query", identifier="q", sequence=1, expression="x"
+    )
+    assert query == Query(identifier="q", sequence=1, expression="x")
+
+
+def test_bypassed_schema_hook_reports_uncompiled_defaults() -> None:
+    class BypassedQuery(Query):
+        @classmethod
+        def __get_pydantic_core_schema__(
+            cls, source: type[BaseModel], handler: GetCoreSchemaHandler
+        ) -> CoreSchema:
+            return handler(source)
+
+    with pytest.raises(ValueError, match="Automatic tag defaults were not compiled") as error:
+        BypassedQuery(identifier="q", sequence=1, expression="x")
+    assert "__get_pydantic_core_schema__" in str(error.value)
+    assert "DiscriminatedModel schema hook by calling super()" in str(error.value)
+    explicit = BypassedQuery(
+        kind="request", method="query", identifier="q", sequence=1, expression="x"
+    )
+    assert explicit.kind == "request"
+    assert explicit.method == "query"
+
+    class DelegatingQuery(Query):
+        @classmethod
+        def __get_pydantic_core_schema__(
+            cls, source: type[BaseModel], handler: GetCoreSchemaHandler
+        ) -> CoreSchema:
+            return super().__get_pydantic_core_schema__(source, handler)
+
+    delegated = DelegatingQuery(identifier="q", sequence=1, expression="x")
+    assert delegated.kind == "request"
+    assert delegated.method == "query"
+    assert {"kind", "method"} <= delegated.model_fields_set
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_unset_dumps_preserve_multilevel_identity_and_skip_payload_defaults(explicit: bool) -> None:
+    class DetailedStream(Stream):
+        note: str = "default note"
+
+    binding = bind_variants([Query, DetailedStream, Ping])
+
+    class Envelope(BaseModel):
+        primary: Annotated[Message[Any], binding]
+        values: list[Annotated[Message[Any], binding]]
+        by_name: dict[str, Annotated[Message[Any], binding]]
+        optional: Annotated[Message[Any], binding] | None = None
+        note: str = "envelope default"
+
+    data: dict[str, object] = {"identifier": "s", "sequence": 1, "size": 2, "cursor": "next"}
+    if explicit:
+        data.update(kind="request", method="batch", mode="stream")
+    item = DetailedStream.model_validate(data)
+    assert {"kind", "method", "mode"} <= item.model_fields_set
+    assert "note" not in item.model_fields_set
+    envelope = Envelope(primary=item, values=[item], by_name={"s": item}, optional=item)
+    payload = envelope.model_dump(exclude_unset=True)
+    assert "note" not in payload
+    for nested in (
+        payload["primary"],
+        payload["values"][0],
+        payload["by_name"]["s"],
+        payload["optional"],
+    ):
+        assert {key: nested[key] for key in ("kind", "method", "mode")} == {
+            "kind": "request",
+            "method": "batch",
+            "mode": "stream",
+        }
+        assert "note" not in nested
+    assert Envelope.model_validate(payload) == envelope
+    assert Envelope.model_validate_json(envelope.model_dump_json(exclude_unset=True)) == envelope
+    adapter = TypeAdapter(Envelope)
+    assert adapter.validate_json(adapter.dump_json(envelope, exclude_unset=True)) == envelope
+    # Explicit exclusions, including combined flags, still have native precedence.
+    excluded = item.model_dump(exclude_unset=True, exclude={"kind"})
+    assert "kind" not in excluded and excluded["mode"] == "stream"
+    assert "kind" not in item.model_dump(exclude_unset=True, exclude_defaults=True)
+    assert item.model_dump(exclude_unset=True, include={"identifier"}) == {"identifier": "s"}
+
+
+def test_bound_identity_is_marked_for_attributes_aliases_and_open_views() -> None:
+    class AliasQuery(Request[NestedQueryTag]):
+        expression: str = "default expression"
+
+    item = AliasQuery.model_validate(
+        SimpleNamespace(identifier="a", sequence=1), from_attributes=True
+    )
+    assert item.model_dump(exclude_unset=True) == {
+        "kind": "request",
+        "method": "query",
+        "identifier": "a",
+        "sequence": 1,
+    }
+    adapter = build_adapter(Message[Any], variants=[AliasQuery])
+    assert adapter.validate_json(adapter.dump_json(item, exclude_unset=True)) == item
+    open_view = Request[Any](method="custom", identifier="r", sequence=1)
+    assert open_view.model_dump(exclude_unset=True) == {
+        "kind": "request",
+        "method": "custom",
+        "identifier": "r",
+        "sequence": 1,
+    }
+    with pytest.raises(ValidationError, match="Field required"):
+        Request[Any](identifier="r", sequence=1)
+
+
+@pytest.mark.parametrize("rebuild", [False, True])
+def test_public_tag_marking_precedes_subclass_validators_and_is_idempotent(rebuild: bool) -> None:
+    observed: list[set[str]] = []
+
+    class CheckedQuery(Query):
+        note: str = "default note"
+
+        @model_validator(mode="after")
+        def check_identity(self) -> "CheckedQuery":
+            assert {"kind", "method"} <= self.model_fields_set
+            assert "note" not in self.model_fields_set
+            observed.append(self.model_fields_set.copy())
+            return self
+
+    if rebuild:
+        assert CheckedQuery.model_rebuild(force=True)
+    item = CheckedQuery(identifier="q", sequence=1, expression="x")
+    expected = item.model_fields_set.copy()
+    binding = bind_variants([CheckedQuery, Ping])
+
+    class Envelope(BaseModel):
+        items: list[Annotated[Message[Any], binding]]
+
+    envelope = Envelope(items=[item, item])
+    assert envelope.items[0] is item
+    assert envelope.items[1] is item
+    assert observed == [expected, expected, expected]
+    assert item.model_fields_set == expected
+    restored = Envelope.model_validate_json(envelope.model_dump_json(exclude_unset=True))
+    assert restored == envelope
+    assert all(type(value) is CheckedQuery for value in restored.items)
+    assert all(value.model_fields_set == expected for value in restored.items)
+
+
+def test_mixin_after_validator_retains_native_mro_order() -> None:
+    observed: list[set[str]] = []
+
+    class Observer:
+        @model_validator(mode="after")
+        def observe(self) -> Self:
+            assert isinstance(self, BaseModel)
+            observed.append(self.model_fields_set.copy())
+            return self
+
+    class MixedQuery(Query, Observer):
+        pass
+
+    item = MixedQuery(identifier="q", sequence=1, expression="x")
+    assert observed == [{"identifier", "sequence", "expression"}]
+    assert {"kind", "method"} <= item.model_fields_set
+    wire = item.model_dump_json(exclude_unset=True)
+    assert MixedQuery.model_validate_json(wire) == item

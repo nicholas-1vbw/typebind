@@ -9,7 +9,13 @@ from ._discovery import (
     select_implementations,
     select_variants,
 )
-from ._models import DiscriminatedModel, bind_variants, build_adapter, tag_field
+from ._models import (
+    DiscriminatedModel,
+    IdentityDiscriminatedModel,
+    bind_variants,
+    build_adapter,
+    tag_field,
+)
 
 __all__ = [
     "BehaviorAdapter",
@@ -20,6 +26,7 @@ __all__ = [
     "select_implementations",
     "DiscoveredVariant",
     "DiscriminatedModel",
+    "IdentityDiscriminatedModel",
     "bind_variants",
     "build_adapter",
     "discover_variants",

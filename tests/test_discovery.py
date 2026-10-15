@@ -374,7 +374,7 @@ def test_discovered_and_local_variants_preserve_nested_roundtrips(
         optional=local,
         template=BasicTemplate(content="hello"),
     )
-    assert stream.model_dump(exclude_defaults=True)["mode"] == "stream"
+    assert stream.model_dump()["mode"] == "stream"
     restored = Envelope.model_validate_json(envelope.model_dump_json(warnings="error"))
     assert restored == envelope
     assert type(restored.primary) is Query

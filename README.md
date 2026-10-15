@@ -26,7 +26,7 @@ omit fixed tags; incoming data routed through an adapter must contain them.
 
 from typing import Any, Literal
 
-from typebind import DiscriminatedModel, build_adapter, tag_field
+from typebind import DiscriminatedModel, IdentityDiscriminatedModel, build_adapter, tag_field
 
 
 class Message[Kind: str](DiscriminatedModel):
@@ -50,12 +50,60 @@ assert type(restored) is Query
 assert restored == query
 assert type(adapter.validate_python({"kind": "ping", "identifier": "p"})) is Ping
 print(wire.decode())
+
+# Choose the policy at the family root. Native defaults remain unset.
+assert "kind" not in query.model_dump(exclude_unset=True)
+
+
+class IdentityMessage[Kind: str](IdentityDiscriminatedModel):
+    kind: Kind = tag_field()
+    identifier: str
+
+
+class IdentityQuery(IdentityMessage[Literal["query"]]):
+    expression: str
+
+
+identity_adapter = build_adapter(IdentityMessage[Any], variants=(IdentityQuery,))
+identity = IdentityQuery(identifier="q", expression="hello")
+identity_wire = identity_adapter.dump_json(identity, exclude_unset=True)
+assert identity_adapter.validate_json(identity_wire) == identity
+assert identity.model_dump() == query.model_dump()
 ```
 
 `build_adapter` returns a native Pydantic `TypeAdapter`. For nested containers,
 use `Annotated[Family[Any], bind_variants(variants)]` as described in the
 [model guide](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md). `Family[Any]` keeps common fields typed while allowing
 runtime-selected tags; concrete models retain exact `Literal` tags.
+
+## Serialization contract
+
+Use Pydantic JSON serialization and validation for persistence and messages:
+`adapter.dump_json()` / `adapter.validate_json()` for an assembled family, or
+`model_dump_json()` / `model_validate_json()` for a model with explicitly bound
+nested fields. Keep discriminator fields in the serialized data and configure
+the reader with the variants it accepts. Ordinary dumps retain tags.
+Choose a base class when declaring a family:
+
+| Base class | Omitted tag in `exclude_unset=True` | Runtime identity marking |
+| --- | --- | --- |
+| `DiscriminatedModel` | Omitted, like a native Pydantic default | None: no marker callback or policy branch |
+| `IdentityDiscriminatedModel` | Retained as an explicitly set identity field | One inherited public after-validator |
+
+Both support the same automatic defaults, generics, multilevel dispatch, discovery
+and behavior assembly. The `Identity` prefix means bound tags are treated as set
+identity fields even when the caller omits them; it does not change their values.
+Existing families that need the earlier unset-export guarantee should inherit
+`IdentityDiscriminatedModel`. Ordinary dumps retain tags with either base.
+`exclude_defaults=True` and explicit tag exclusions can remove tags with either
+base; do not use those options for family interchange. When a storage SDK expects a dictionary,
+use `model_dump(mode="json")` (or `adapter.dump_python(mode="json")`).
+
+Pickle is not suitable for this persistence or interchange contract; pickle
+compatibility is not an acceptance requirement. Store data models, then reassemble
+behavior implementations in the receiving process. See the
+[serialization contract](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#json-serialization-contract)
+for scope and versioning boundaries.
 
 ## Choose an example
 
@@ -129,12 +177,22 @@ source contents, and clean-environment execution outside the checkout.
 
 [CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps for Python 3.12–3.15 on Linux, macOS and Windows.
 Each job passes its Python version to `setup-uv`, which sets `UV_PYTHON` and
-includes the version in its cache key. It synchronizes locked dependencies once,
+includes the version in its cache key. The full matrix runs on pull requests,
+main pushes, and manual dispatch; ordinary branch pushes do not trigger a second run. It synchronizes locked dependencies once,
 then uses `uv run --no-sync` for each step. Local development
 defaults to `.python-version`; set `UV_PYTHON=3.12` when running `poe check` to
 check the minimum supported version. Strict Pyright targets Python 3.12.
-Local `poe check` remains the aggregate entry point. Its microbenchmark
-has no timing threshold and does not measure service throughput. Local passing
+Local `poe check` remains the aggregate entry point. `poe benchmark` runs model
+construction/JSON and behavior adaptation benchmarks; `poe benchmark-models` and
+`poe benchmark-behavior` run them separately. Model cases compare omitted and
+explicit tags for both public bases at one and two levels, including named
+Literal aliases, against
+ordinary Pydantic models with matching frozen fields and `validate_default=True`.
+A second native control marks the same identity fields as set through a standard
+validator, exposing the cost of that guarantee separately from plain defaults.
+The benchmark also exercises nested JSON round trips with `exclude_unset=True`.
+Benchmarks
+have no timing threshold and do not measure service throughput. Local passing
 checks do not imply that hosted CI has passed. Development tools and example
 packages are in the development dependency group; the library's runtime
 requirements remain separate. Update `uv.lock` when dependencies change.

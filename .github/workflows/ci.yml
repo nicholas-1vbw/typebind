@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -41,6 +42,6 @@ jobs:
         run: uv run --no-sync poe build
       - name: Verify artifacts and isolated installation
         run: uv run --no-sync poe check-dist
-      - name: Report adaptation microbenchmarks
+      - name: Report model and adaptation microbenchmarks
         if: runner.os == 'Linux'
         run: uv run --no-sync poe benchmark

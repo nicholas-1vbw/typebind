@@ -3,10 +3,10 @@
 from abc import abstractmethod
 from typing import Any, Literal, Protocol
 
-from typebind import DiscriminatedModel, Implementation, tag_field
+from typebind import DiscriminatedModel, IdentityDiscriminatedModel, Implementation, tag_field
 
 
-class Message[Kind: str](DiscriminatedModel):
+class Message[Kind: str](IdentityDiscriminatedModel):
     kind: Kind = tag_field()
     identifier: str
 
