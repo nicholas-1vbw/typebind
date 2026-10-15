@@ -144,7 +144,8 @@ source contents, and clean-environment execution outside the checkout.
 
 [CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps for Python 3.12–3.15 on Linux, macOS and Windows.
 Each job passes its Python version to `setup-uv`, which sets `UV_PYTHON` and
-includes the version in its cache key. It synchronizes locked dependencies once,
+includes the version in its cache key. The full matrix runs on pull requests,
+main pushes, and manual dispatch; ordinary branch pushes do not trigger a second run. It synchronizes locked dependencies once,
 then uses `uv run --no-sync` for each step. Local development
 defaults to `.python-version`; set `UV_PYTHON=3.12` when running `poe check` to
 check the minimum supported version. Strict Pyright targets Python 3.12.
