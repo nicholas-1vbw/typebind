@@ -177,9 +177,18 @@ an explicit parameter under strict checking. Do not use `Request[str]` to mean
   is a marker, not an instance-time default generator. `model_fields` continues to
   expose that declaration; compiled validation and JSON Schema expose the derived
   literal default. Schema generation also captures the bound discriminator names
-  in an immutable tuple. One callback updates Pydantic's fields-set result after
-  field validation, before model creation and user after-model validators. It
-  performs no field scan, annotation resolution, cache lookup, or input copying.
+  in an immutable class-level tuple derived from the fields. A base
+  `model_validator(mode="after")` updates the instance's public `model_fields_set`
+  before ordinary subclass after-validators. It performs no field scan,
+  annotation resolution, or input copying. Pydantic may run after-validators again
+  when nesting existing instances; the set update is idempotent.
+- Validator composition follows Pydantic's native MRO order. An after-validator
+  inherited from another mixin can run before the base marking validator (for
+  example, `class Leaf(Family[Literal["leaf"]], ObserverMixin)`). Such a validator
+  must not assume omitted tags are already marked as set or retained by
+  `exclude_unset` at that point. Ordinary subclass after-validators run after the
+  base marker, and completed validated instances retain bound tags. Typebind does
+  not reorder native validators to enforce earlier marking across arbitrary mixins.
 - Bound discriminators represent type identity, so they enter `model_fields_set`
   even when omitted by the caller. Ordinary dumps and `exclude_unset=True` retain
   them; unrelated omitted payload defaults stay unset. Explicitly supplied tags
@@ -233,10 +242,11 @@ a normal `TypeAdapter`. The MRO identifies family boundaries; `model_fields`
 provides discriminator names and Literal values. Duplicate checks and dispatch
 use the same local table. Automatic defaults are derived from the same fields
 when Pydantic generates the model's schema. The public schema hook replaces only
-marked defaults along the model's validator wrappers and marks bound identity
-fields as set after field validation; payload schemas and native references are
-preserved. There is no parallel class-level tag registry, cached
-path, or annotation-result cache to synchronize.
+marked defaults along the model's validator wrappers; payload schemas and native
+references are preserved. A base after-validator marks bound identity fields as
+set through the public `model_fields_set` property. The derived field-name tuple
+is refreshed during schema generation; it contains no tag values. There is no
+parallel tag registry, cached path, or annotation-result cache to synchronize.
 
 For nested fields, `bind_variants` captures the supplied leaves and returns
 Pydantic's `GetPydanticSchema` metadata. The metadata asks Pydantic to generate the
@@ -305,13 +315,38 @@ The declaration hook reads Pydantic's generic metadata to identify the originati
 family. Default generation uses the public core-schema hook and native
 `with_default_schema`; union generation uses public Pydantic APIs. No private
 compiler options or custom generic-class creation are used. The supported Pydantic minor series is specified in
-`pyproject.toml`; reassess generic metadata compatibility before widening it.
+`pyproject.toml`. Before widening that range or upgrading the resolved Pydantic /
+pydantic-core versions, verify these compatibility boundaries:
+
+- Generic metadata and specialized fields still identify families and resolve
+  Literal tags, including type aliases.
+- Core-schema generation still replaces the tag factory with native defaults and
+  preserves validator wrappers, nested references, and model rebuild behavior.
+- The inherited `model_validator(mode="after")` still marks bound tags through
+  the public `model_fields_set` property before ordinary subclass after-validators
+  run; mixin validators retain native MRO ordering. Nested validation can run
+  this validator again on an existing instance;
+  the set update must remain idempotent. No model-fields result tuple is inspected.
+- Schema generation, including `model_rebuild()`, refreshes the derived tuple of
+  bound field names from `model_fields`. Field definitions remain authoritative;
+  instances must not scan fields or resolve tags.
+- Omitted and explicit tags survive `exclude_unset=True`, including multilevel
+  models and nested JSON round trips. Ordinary payload defaults remain unset;
+  `exclude_defaults` and explicit inclusion/exclusion retain native semantics.
+
+Run the existing model regression tests and the full `poe check` suite against
+candidate dependency versions. The version upper bound limits the supported
+range; it does not replace these compatibility checks.
 
 Each family has one discriminator type parameter. Additional payload type
 parameters, refinement of an open family without selecting its tag, discriminator
 aliases, and multiple DiscriminatedModel parents remain outside this package's
 contract. These are current implementation limitations, not general requirements of Pydantic.
-Custom constructors and custom schema hooks are not covered by the tests.
+Custom constructors and arbitrary custom schema transformations are outside the
+compatibility guarantee. An override of `__get_pydantic_core_schema__` must preserve
+this base class's hook by calling `super()` to retain automatic tags. Regression
+tests cover delegation and the diagnostic when an override bypasses that hook;
+they do not establish compatibility with every custom schema transformation.
 Dynamic type-expression assembly and the public field helper use localized `Any`;
 open consumers explicitly opt into `Family[Any]`. Concrete tag parameters and
 payload fields retain their declared types.

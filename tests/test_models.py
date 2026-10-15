@@ -2,13 +2,14 @@
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Annotated, Any, Literal, assert_type, cast, get_type_hints
+from typing import Annotated, Any, Literal, Self, assert_type, cast, get_type_hints
 from uuid import UUID
 
 import pytest
 from pydantic import (
     BaseModel,
     Field,
+    GetCoreSchemaHandler,
     ModelWrapValidatorHandler,
     PydanticUserError,
     TypeAdapter,
@@ -17,6 +18,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import CoreSchema
 
 from typebind import DiscriminatedModel, bind_variants, build_adapter, tag_field
 
@@ -834,12 +836,43 @@ def test_normal_dumps_keep_tags_and_lossy_dumps_do_not_dispatch() -> None:
 
 
 def test_unchecked_construction_requires_explicit_tags_without_leaking_markers() -> None:
-    with pytest.raises(ValueError, match="supply tags to model_construct"):
+    with pytest.raises(ValueError, match=r"model_construct\(\), supply tags explicitly"):
         Query.model_construct(identifier="q", sequence=1, expression="x")
     query = Query.model_construct(
         kind="request", method="query", identifier="q", sequence=1, expression="x"
     )
     assert query == Query(identifier="q", sequence=1, expression="x")
+
+
+def test_bypassed_schema_hook_reports_uncompiled_defaults() -> None:
+    class BypassedQuery(Query):
+        @classmethod
+        def __get_pydantic_core_schema__(
+            cls, source: type[BaseModel], handler: GetCoreSchemaHandler
+        ) -> CoreSchema:
+            return handler(source)
+
+    with pytest.raises(ValueError, match="Automatic tag defaults were not compiled") as error:
+        BypassedQuery(identifier="q", sequence=1, expression="x")
+    assert "__get_pydantic_core_schema__" in str(error.value)
+    assert "DiscriminatedModel schema hook by calling super()" in str(error.value)
+    explicit = BypassedQuery(
+        kind="request", method="query", identifier="q", sequence=1, expression="x"
+    )
+    assert explicit.kind == "request"
+    assert explicit.method == "query"
+
+    class DelegatingQuery(Query):
+        @classmethod
+        def __get_pydantic_core_schema__(
+            cls, source: type[BaseModel], handler: GetCoreSchemaHandler
+        ) -> CoreSchema:
+            return super().__get_pydantic_core_schema__(source, handler)
+
+    delegated = DelegatingQuery(identifier="q", sequence=1, expression="x")
+    assert delegated.kind == "request"
+    assert delegated.method == "query"
+    assert {"kind", "method"} <= delegated.model_fields_set
 
 
 @pytest.mark.parametrize("explicit", [False, True])
@@ -912,3 +945,57 @@ def test_bound_identity_is_marked_for_attributes_aliases_and_open_views() -> Non
     }
     with pytest.raises(ValidationError, match="Field required"):
         Request[Any](identifier="r", sequence=1)
+
+
+@pytest.mark.parametrize("rebuild", [False, True])
+def test_public_tag_marking_precedes_subclass_validators_and_is_idempotent(rebuild: bool) -> None:
+    observed: list[set[str]] = []
+
+    class CheckedQuery(Query):
+        note: str = "default note"
+
+        @model_validator(mode="after")
+        def check_identity(self) -> "CheckedQuery":
+            assert {"kind", "method"} <= self.model_fields_set
+            assert "note" not in self.model_fields_set
+            observed.append(self.model_fields_set.copy())
+            return self
+
+    if rebuild:
+        assert CheckedQuery.model_rebuild(force=True)
+    item = CheckedQuery(identifier="q", sequence=1, expression="x")
+    expected = item.model_fields_set.copy()
+    binding = bind_variants([CheckedQuery, Ping])
+
+    class Envelope(BaseModel):
+        items: list[Annotated[Message[Any], binding]]
+
+    envelope = Envelope(items=[item, item])
+    assert envelope.items[0] is item
+    assert envelope.items[1] is item
+    assert observed == [expected, expected, expected]
+    assert item.model_fields_set == expected
+    restored = Envelope.model_validate_json(envelope.model_dump_json(exclude_unset=True))
+    assert restored == envelope
+    assert all(type(value) is CheckedQuery for value in restored.items)
+    assert all(value.model_fields_set == expected for value in restored.items)
+
+
+def test_mixin_after_validator_retains_native_mro_order() -> None:
+    observed: list[set[str]] = []
+
+    class Observer:
+        @model_validator(mode="after")
+        def observe(self) -> Self:
+            assert isinstance(self, BaseModel)
+            observed.append(self.model_fields_set.copy())
+            return self
+
+    class MixedQuery(Query, Observer):
+        pass
+
+    item = MixedQuery(identifier="q", sequence=1, expression="x")
+    assert observed == [{"identifier", "sequence", "expression"}]
+    assert {"kind", "method"} <= item.model_fields_set
+    wire = item.model_dump_json(exclude_unset=True)
+    assert MixedQuery.model_validate_json(wire) == item
