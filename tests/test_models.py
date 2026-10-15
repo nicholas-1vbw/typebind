@@ -20,7 +20,13 @@ from pydantic import (
 )
 from pydantic_core import CoreSchema
 
-from typebind import DiscriminatedModel, bind_variants, build_adapter, tag_field
+from typebind import (
+    DiscriminatedModel,
+    IdentityDiscriminatedModel,
+    bind_variants,
+    build_adapter,
+    tag_field,
+)
 
 type QueryTag = Literal["query"]
 type NestedQueryTag = QueryTag
@@ -34,7 +40,7 @@ class SecondTags:
     type Tag = Literal["second"]
 
 
-class Message[Kind: str](DiscriminatedModel):
+class Message[Kind: str](IdentityDiscriminatedModel):
     kind: Kind = tag_field()
     identifier: str
 
@@ -293,7 +299,7 @@ def test_variant_bindings_are_explicit_independent_snapshots() -> None:
 
 
 def test_recursive_family_fields() -> None:
-    class Node[Kind: str](DiscriminatedModel):
+    class Node[Kind: str](IdentityDiscriminatedModel):
         kind: Kind = tag_field()
         label: str
 
@@ -316,7 +322,7 @@ def test_recursive_family_fields() -> None:
 def test_model_validators_are_not_duplicated() -> None:
     from typing import Self
 
-    class Checked[Kind: str](DiscriminatedModel):
+    class Checked[Kind: str](IdentityDiscriminatedModel):
         kind: Kind = tag_field()
         value: int
 
@@ -336,7 +342,7 @@ def test_model_validators_are_not_duplicated() -> None:
 def test_independent_families_and_missing_wrapped_family() -> None:
     from typing import Self
 
-    class Separate[Kind: str](DiscriminatedModel):
+    class Separate[Kind: str](IdentityDiscriminatedModel):
         kind: Kind = tag_field()
         value: int
 
@@ -416,21 +422,21 @@ def test_unbound_containers_are_not_transparently_rewritten() -> None:
 def test_discriminator_fields_require_validated_frozen_defaults() -> None:
     with pytest.raises(TypeError, match="declare its discriminator with tag_field"):
 
-        class RequiredTag[Kind: str](DiscriminatedModel):
+        class RequiredTag[Kind: str](IdentityDiscriminatedModel):
             kind: Kind
 
         assert issubclass(RequiredTag, DiscriminatedModel)
 
     with pytest.raises(TypeError, match="declare its discriminator with tag_field"):
 
-        class MutableTag[Kind: str](DiscriminatedModel):
+        class MutableTag[Kind: str](IdentityDiscriminatedModel):
             kind: Kind = Field()
 
         assert issubclass(MutableTag, DiscriminatedModel)
 
     with pytest.raises(TypeError, match="str-bound type parameter") as error:
 
-        class Unbounded[Tag](DiscriminatedModel):
+        class Unbounded[Tag](IdentityDiscriminatedModel):
             kind: Tag = tag_field()
 
         assert issubclass(Unbounded, DiscriminatedModel)
@@ -451,7 +457,7 @@ def test_named_literal_type_aliases_use_native_resolution() -> None:
 
 
 def test_automatic_defaults_reach_inherited_field_validators_as_strings() -> None:
-    class Normalized[Kind: str](DiscriminatedModel):
+    class Normalized[Kind: str](IdentityDiscriminatedModel):
         kind: Kind = tag_field()
 
         @field_validator("kind", mode="before")
@@ -519,7 +525,7 @@ def test_conditional_tag_exclusion_is_rejected_at_declaration() -> None:
 
     with pytest.raises(TypeError, match="aliases, or exclusion") as error:
 
-        class HiddenTag[Kind: str](DiscriminatedModel):
+        class HiddenTag[Kind: str](IdentityDiscriminatedModel):
             kind: Annotated[Kind, Field(exclude_if=omit_tag)] = tag_field()
 
         assert issubclass(HiddenTag, DiscriminatedModel)
@@ -551,7 +557,7 @@ def test_tag_field_is_the_single_source_of_the_discriminator() -> None:
 def test_multiple_new_tag_fields_are_rejected() -> None:
     with pytest.raises(TypeError, match="exactly one new tag_field") as error:
 
-        class Ambiguous[Tag: str](DiscriminatedModel):
+        class Ambiguous[Tag: str](IdentityDiscriminatedModel):
             kind: Tag = tag_field()
             method: Tag = tag_field()
 
@@ -570,7 +576,7 @@ def test_inherited_tag_defaults_and_freezing_cannot_be_removed() -> None:
 def test_tag_field_requires_a_generic_discriminator() -> None:
     with pytest.raises(TypeError, match="str-bound type parameter"):
 
-        class ConcreteTag(DiscriminatedModel):
+        class ConcreteTag(IdentityDiscriminatedModel):
             kind: Literal["concrete"] = tag_field()
 
         assert issubclass(ConcreteTag, DiscriminatedModel)
@@ -765,7 +771,7 @@ def test_native_defaults_survive_recursive_and_deferred_rebuild(deferred: bool) 
 def test_defaults_preserve_validator_order_context_and_single_execution() -> None:
     events: list[str] = []
 
-    class Checked[Kind: str](DiscriminatedModel):
+    class Checked[Kind: str](IdentityDiscriminatedModel):
         kind: Kind = tag_field()
 
         @model_validator(mode="before")

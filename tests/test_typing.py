@@ -5,12 +5,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SOURCE = """\
 from typing import Annotated, Any, Literal, assert_type
 from pydantic import BaseModel, TypeAdapter
-from typebind import DiscriminatedModel, bind_variants, build_adapter, tag_field
+from typebind import (
+    DiscriminatedModel, IdentityDiscriminatedModel, bind_variants, build_adapter, tag_field,
+)
 from typebind import DiscoveredVariant, discover_variants, select_variants
 
+
+assert issubclass(IdentityDiscriminatedModel, DiscriminatedModel)
 
 class Message[Kind: str](DiscriminatedModel):
     kind: Kind = tag_field()
@@ -155,12 +161,16 @@ DiscoveredVariant(Document, discovered[0].entry_point)
 """
 
 
-def test_strict_downstream_typing(tmp_path: Path) -> None:
+@pytest.mark.parametrize("base", ["DiscriminatedModel", "IdentityDiscriminatedModel"])
+def test_strict_downstream_typing(tmp_path: Path, base: str) -> None:
+    source = SOURCE.replace(
+        "class Message[Kind: str](DiscriminatedModel)", f"class Message[Kind: str]({base})"
+    )
     (tmp_path / "pyrightconfig.json").write_text(
         json.dumps({"typeCheckingMode": "strict", "pythonVersion": "3.12"})
     )
     sample = tmp_path / "consumer.py"
-    sample.write_text(SOURCE)
+    sample.write_text(source)
     command = [
         sys.executable,
         "-m",
@@ -174,12 +184,12 @@ def test_strict_downstream_typing(tmp_path: Path) -> None:
     positive = subprocess.run(command, capture_output=True, text=True, check=False)
     assert positive.returncode == 0, positive.stdout + positive.stderr
     assert json.loads(positive.stdout)["summary"]["errorCount"] == 0
-    sample.write_text(SOURCE + INVALID)
+    sample.write_text(source + INVALID)
     negative = subprocess.run(command, capture_output=True, text=True, check=False)
     assert negative.returncode != 0
     diagnostics = json.loads(negative.stdout)["generalDiagnostics"]
     errors = [item for item in diagnostics if item["severity"] == "error"]
-    first = len(SOURCE.splitlines())
+    first = len(source.splitlines())
     for line in range(first, first + len(INVALID.splitlines())):
         assert any(item["range"]["start"]["line"] == line for item in errors), (line, errors)
     assert all(item["range"]["start"]["line"] >= first for item in errors)

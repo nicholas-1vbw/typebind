@@ -3,6 +3,30 @@
 [Back to README](../README.md). Run `uv run --locked poe example-models` for a
 self-contained introduction. The snippets below build on each other in order.
 
+## Choosing export semantics
+
+Choose the base at the family root, before declaring its concrete variants:
+
+| Base | Automatic tag defaults | Omitted tags in `exclude_unset=True` |
+| --- | --- | --- |
+| `DiscriminatedModel` | Native validated defaults | Omitted, as with ordinary Pydantic defaults |
+| `IdentityDiscriminatedModel` | The same native defaults | Retained by marking bound identity fields as set |
+
+`IdentityDiscriminatedModel` is a subclass of `DiscriminatedModel`. The longer name
+makes the extra identity-marking contract explicit. Both participate in the same
+family selection, unions, discovery and behavior assembly. This is a declaration
+choice, not a per-instance flag: the basic class has no marking validator, derived
+identity-name tuple or runtime policy branch. Only the identity subclass derives
+names and registers the public after-validator. Field definitions remain the
+single source of truth for both policies.
+
+Ordinary JSON dumps retain tags for both bases. Choose the identity base when
+exports using `exclude_unset=True` must remain routable. Changing an existing
+family from the identity base to the basic base changes that export contract.
+Families migrating from the previous single-base API should choose
+`IdentityDiscriminatedModel` to keep its unset-export behavior. The following guide
+uses the identity base; the runnable model example demonstrates both policies.
+
 ## Model declarations
 
 Family authors declare one type parameter and one `tag_field()` per level.
@@ -13,10 +37,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
-from typebind import DiscriminatedModel, bind_variants, build_adapter, tag_field
+from typebind import IdentityDiscriminatedModel, bind_variants, build_adapter, tag_field
 
 
-class Message[Kind: str](DiscriminatedModel):
+class Message[Kind: str](IdentityDiscriminatedModel):
     kind: Kind = tag_field()
     identifier: str
 
@@ -176,20 +200,23 @@ an explicit parameter under strict checking. Do not use `Request[str]` to mean
   field; the annotation still determines consumer types. The declaration factory
   is a marker, not an instance-time default generator. `model_fields` continues to
   expose that declaration; compiled validation and JSON Schema expose the derived
-  literal default. Schema generation also captures the bound discriminator names
+  literal default. For `IdentityDiscriminatedModel`, schema generation also captures
+  the bound discriminator names
   in an immutable class-level tuple derived from the fields. A base
   `model_validator(mode="after")` updates the instance's public `model_fields_set`
   before ordinary subclass after-validators. It performs no field scan,
   annotation resolution, or input copying. Pydantic may run after-validators again
   when nesting existing instances; the set update is idempotent.
-- Validator composition follows Pydantic's native MRO order. An after-validator
+- For the identity base, validator composition follows Pydantic's native MRO order.
+  An after-validator
   inherited from another mixin can run before the base marking validator (for
   example, `class Leaf(Family[Literal["leaf"]], ObserverMixin)`). Such a validator
   must not assume omitted tags are already marked as set or retained by
   `exclude_unset` at that point. Ordinary subclass after-validators run after the
   base marker, and completed validated instances retain bound tags. Typebind does
   not reorder native validators to enforce earlier marking across arbitrary mixins.
-- Bound discriminators represent type identity, so they enter `model_fields_set`
+- With `IdentityDiscriminatedModel`, bound discriminators represent type identity,
+  so they enter `model_fields_set`
   even when omitted by the caller. Ordinary dumps and `exclude_unset=True` retain
   them; unrelated omitted payload defaults stay unset. Explicitly supplied tags
   follow the same path. Open tags still require input.
@@ -243,8 +270,8 @@ provides discriminator names and Literal values. Duplicate checks and dispatch
 use the same local table. Automatic defaults are derived from the same fields
 when Pydantic generates the model's schema. The public schema hook replaces only
 marked defaults along the model's validator wrappers; payload schemas and native
-references are preserved. A base after-validator marks bound identity fields as
-set through the public `model_fields_set` property. The derived field-name tuple
+references are preserved. The identity subclass adds an after-validator that
+marks bound identity fields as set through the public `model_fields_set` property. The derived field-name tuple
 is refreshed during schema generation; it contains no tag values. There is no
 parallel tag registry, cached path, or annotation-result cache to synchronize.
 
@@ -286,10 +313,11 @@ concrete model or envelope with explicitly bound family fields, use
 `model_dump_json()` and `model_validate_json()`. The reader must have the required
 variant definitions and binding; unknown discriminator values are rejected.
 Ordinary model and adapter dumps retain all routing tags. Keep those tags and
-required payload fields in serialized records. `exclude_unset=True` retains all
-bound tags while omitting unrelated unset defaults, including in nested family
-fields. `exclude_defaults=True` and explicit field exclusions can still remove
-tags, even when combined with `exclude_unset=True`; such outputs cannot be relied
+required payload fields in serialized records. For `IdentityDiscriminatedModel`,
+`exclude_unset=True` retains all bound tags while omitting unrelated unset defaults, including in nested family
+fields. For `DiscriminatedModel`, omitted default tags are excluded, so use an
+ordinary dump for family interchange. `exclude_defaults=True` and explicit field
+exclusions can still remove tags, even when combined with `exclude_unset=True`; such outputs cannot be relied
 on for family round trips. Native union validation
 rejects missing tags with `union_tag_not_found` before selecting a concrete model.
 
@@ -322,17 +350,20 @@ pydantic-core versions, verify these compatibility boundaries:
   Literal tags, including type aliases.
 - Core-schema generation still replaces the tag factory with native defaults and
   preserves validator wrappers, nested references, and model rebuild behavior.
-- The inherited `model_validator(mode="after")` still marks bound tags through
+- For the identity subclass, the inherited `model_validator(mode="after")` still marks bound tags through
   the public `model_fields_set` property before ordinary subclass after-validators
   run; mixin validators retain native MRO ordering. Nested validation can run
   this validator again on an existing instance;
   the set update must remain idempotent. No model-fields result tuple is inspected.
-- Schema generation, including `model_rebuild()`, refreshes the derived tuple of
+- For the identity subclass, schema generation, including `model_rebuild()`,
+  refreshes the derived tuple of
   bound field names from `model_fields`. Field definitions remain authoritative;
   instances must not scan fields or resolve tags.
-- Omitted and explicit tags survive `exclude_unset=True`, including multilevel
+- Identity models retain omitted and explicit tags in `exclude_unset=True`,
+  including multilevel
   models and nested JSON round trips. Ordinary payload defaults remain unset;
   `exclude_defaults` and explicit inclusion/exclusion retain native semantics.
+  Basic models retain native unset semantics and compile without a marking callback.
 
 Run the existing model regression tests and the full `poe check` suite against
 candidate dependency versions. The version upper bound limits the supported

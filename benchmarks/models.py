@@ -11,7 +11,13 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
-from typebind import DiscriminatedModel, bind_variants, build_adapter, tag_field
+from typebind import (
+    DiscriminatedModel,
+    IdentityDiscriminatedModel,
+    bind_variants,
+    build_adapter,
+    tag_field,
+)
 
 
 class Message[Kind: str](DiscriminatedModel):
@@ -40,6 +46,31 @@ class AliasEvent(Message[EventTag]):
 
 
 class AliasQuery(Request[QueryTag]):
+    pass
+
+
+class IdentityMessage[Kind: str](IdentityDiscriminatedModel):
+    kind: Kind = tag_field()
+    value: int
+
+
+class IdentityEvent(IdentityMessage[Literal["event"]]):
+    pass
+
+
+class IdentityRequest[Method: str](IdentityMessage[Literal["request"]]):
+    method: Method = tag_field()
+
+
+class IdentityQuery(IdentityRequest[Literal["query"]]):
+    pass
+
+
+class IdentityAliasEvent(IdentityMessage[EventTag]):
+    pass
+
+
+class IdentityAliasQuery(IdentityRequest[QueryTag]):
     pass
 
 
@@ -95,20 +126,22 @@ class MarkedAliasQuery(NativeAliasQuery):
         return self
 
 
-binding = bind_variants([Event, Query, AliasEvent, AliasQuery])
+binding = bind_variants([IdentityEvent, IdentityQuery, IdentityAliasEvent, IdentityAliasQuery])
 
 
 class Envelope(BaseModel):
-    messages: list[Annotated[Message[Any], binding]]
+    messages: list[Annotated[IdentityMessage[Any], binding]]
 
 
 family_adapter = build_adapter(Message[Any], variants=[Event, Query, AliasEvent, AliasQuery])
 envelope_adapter = TypeAdapter(Envelope)
 query = Query(value=1)
 wire = family_adapter.dump_json(query)
-envelope = Envelope(messages=[Event(value=2), query, AliasQuery(value=3)])
+envelope = Envelope(
+    messages=[IdentityEvent(value=2), IdentityQuery(value=1), IdentityAliasQuery(value=3)]
+)
 assert family_adapter.validate_json(wire) == query
-assert family_adapter.validate_json(family_adapter.dump_json(query, exclude_unset=True)) == query
+assert "kind" not in query.model_dump(exclude_unset=True)
 assert envelope_adapter.validate_json(envelope_adapter.dump_json(envelope)) == envelope
 
 cases: dict[str, Callable[[], object]] = {
@@ -120,6 +153,16 @@ cases: dict[str, Callable[[], object]] = {
     "alias_single_explicit": lambda: AliasEvent(kind="alias-event", value=1),
     "alias_multi_omit": lambda: AliasQuery(value=1),
     "alias_multi_explicit": lambda: AliasQuery(kind="request", method="alias-query", value=1),
+    "identity_single_omit": lambda: IdentityEvent(value=1),
+    "identity_single_explicit": lambda: IdentityEvent(kind="event", value=1),
+    "identity_multi_omit": lambda: IdentityQuery(value=1),
+    "identity_multi_explicit": lambda: IdentityQuery(kind="request", method="query", value=1),
+    "identity_alias_single_omit": lambda: IdentityAliasEvent(value=1),
+    "identity_alias_single_explicit": lambda: IdentityAliasEvent(kind="alias-event", value=1),
+    "identity_alias_multi_omit": lambda: IdentityAliasQuery(value=1),
+    "identity_alias_multi_explicit": lambda: IdentityAliasQuery(
+        kind="request", method="alias-query", value=1
+    ),
     "native_single_omit": lambda: NativeEvent(value=1),
     "native_single_explicit": lambda: NativeEvent(kind="event", value=1),
     "native_multi_omit": lambda: NativeQuery(value=1),
@@ -157,10 +200,10 @@ for custom, native in (
     assert custom(value=1).model_dump() == native(value=1).model_dump()
 
 for custom, marked in (
-    (Event, MarkedEvent),
-    (Query, MarkedQuery),
-    (AliasEvent, MarkedAliasEvent),
-    (AliasQuery, MarkedAliasQuery),
+    (IdentityEvent, MarkedEvent),
+    (IdentityQuery, MarkedQuery),
+    (IdentityAliasEvent, MarkedAliasEvent),
+    (IdentityAliasQuery, MarkedAliasQuery),
 ):
     assert custom(value=1).model_dump(exclude_unset=True) == marked(value=1).model_dump(
         exclude_unset=True
@@ -199,12 +242,12 @@ print(
                 name: medians[f"{name}_explicit"] / medians[f"native_{name}_explicit"]
                 for name in ("single", "multi", "alias_single", "alias_multi")
             },
-            "typebind_to_marked_omitted_ratio": {
-                name: medians[f"{name}_omit"] / medians[f"marked_{name}_omit"]
+            "identity_to_marked_omitted_ratio": {
+                name: medians[f"identity_{name}_omit"] / medians[f"marked_{name}_omit"]
                 for name in ("single", "multi", "alias_single", "alias_multi")
             },
-            "typebind_to_marked_explicit_ratio": {
-                name: medians[f"{name}_explicit"] / medians[f"marked_{name}_explicit"]
+            "identity_to_marked_explicit_ratio": {
+                name: medians[f"identity_{name}_explicit"] / medians[f"marked_{name}_explicit"]
                 for name in ("single", "multi", "alias_single", "alias_multi")
             },
             "omit_to_explicit_ratio": {

@@ -26,7 +26,7 @@ omit fixed tags; incoming data routed through an adapter must contain them.
 
 from typing import Any, Literal
 
-from typebind import DiscriminatedModel, build_adapter, tag_field
+from typebind import DiscriminatedModel, IdentityDiscriminatedModel, build_adapter, tag_field
 
 
 class Message[Kind: str](DiscriminatedModel):
@@ -50,6 +50,25 @@ assert type(restored) is Query
 assert restored == query
 assert type(adapter.validate_python({"kind": "ping", "identifier": "p"})) is Ping
 print(wire.decode())
+
+# Choose the policy at the family root. Native defaults remain unset.
+assert "kind" not in query.model_dump(exclude_unset=True)
+
+
+class IdentityMessage[Kind: str](IdentityDiscriminatedModel):
+    kind: Kind = tag_field()
+    identifier: str
+
+
+class IdentityQuery(IdentityMessage[Literal["query"]]):
+    expression: str
+
+
+identity_adapter = build_adapter(IdentityMessage[Any], variants=(IdentityQuery,))
+identity = IdentityQuery(identifier="q", expression="hello")
+identity_wire = identity_adapter.dump_json(identity, exclude_unset=True)
+assert identity_adapter.validate_json(identity_wire) == identity
+assert identity.model_dump() == query.model_dump()
 ```
 
 `build_adapter` returns a native Pydantic `TypeAdapter`. For nested containers,
@@ -64,9 +83,20 @@ Use Pydantic JSON serialization and validation for persistence and messages:
 `model_dump_json()` / `model_validate_json()` for a model with explicitly bound
 nested fields. Keep discriminator fields in the serialized data and configure
 the reader with the variants it accepts. Ordinary dumps retain tags.
-Bound tags are marked as set, so `exclude_unset=True` also retains them while
-omitting unrelated unset defaults. `exclude_defaults=True` and explicit tag
-exclusions can still remove them; do not use those options for family interchange. When a storage SDK expects a dictionary,
+Choose a base class when declaring a family:
+
+| Base class | Omitted tag in `exclude_unset=True` | Runtime identity marking |
+| --- | --- | --- |
+| `DiscriminatedModel` | Omitted, like a native Pydantic default | None: no marker callback or policy branch |
+| `IdentityDiscriminatedModel` | Retained as an explicitly set identity field | One inherited public after-validator |
+
+Both support the same automatic defaults, generics, multilevel dispatch, discovery
+and behavior assembly. The `Identity` prefix means bound tags are treated as set
+identity fields even when the caller omits them; it does not change their values.
+Existing families that need the earlier unset-export guarantee should inherit
+`IdentityDiscriminatedModel`. Ordinary dumps retain tags with either base.
+`exclude_defaults=True` and explicit tag exclusions can remove tags with either
+base; do not use those options for family interchange. When a storage SDK expects a dictionary,
 use `model_dump(mode="json")` (or `adapter.dump_python(mode="json")`).
 
 Pickle is not suitable for this persistence or interchange contract; pickle
@@ -155,7 +185,8 @@ check the minimum supported version. Strict Pyright targets Python 3.12.
 Local `poe check` remains the aggregate entry point. `poe benchmark` runs model
 construction/JSON and behavior adaptation benchmarks; `poe benchmark-models` and
 `poe benchmark-behavior` run them separately. Model cases compare omitted and
-explicit tags at one and two levels, including named Literal aliases, against
+explicit tags for both public bases at one and two levels, including named
+Literal aliases, against
 ordinary Pydantic models with matching frozen fields and `validate_default=True`.
 A second native control marks the same identity fields as set through a standard
 validator, exposing the cost of that guarantee separately from plain defaults.
