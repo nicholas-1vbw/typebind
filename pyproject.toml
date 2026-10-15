@@ -89,7 +89,13 @@ cmd = "python examples/manual.py"
 cmd = "python examples/discovery.py"
 
 [tool.poe.tasks.benchmark]
-help = "Report adaptation microbenchmarks; not a service load test"
+help = "Report model and adaptation microbenchmarks; not a service load test"
+sequence = ["benchmark-models", "benchmark-behavior"]
+
+[tool.poe.tasks.benchmark-models]
+cmd = "python benchmarks/models.py"
+
+[tool.poe.tasks.benchmark-behavior]
 cmd = "python benchmarks/behavior.py"
 
 [tool.poe.tasks.build]

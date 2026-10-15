@@ -222,6 +222,10 @@ a normal `TypeAdapter`. The MRO identifies family boundaries; `model_fields`
 provides discriminator names and Literal values. Duplicate checks and dispatch
 use the same local table. Automatic defaults also read `model_fields` directly,
 so there is no parallel class-level tag registry or cached path to synchronize.
+Pydantic resolves each field annotation to a singleton string tag. A bounded LRU
+cache (128 entries) reuses that derived result by annotation, including native
+named aliases. It does not add per-model tag state, field paths, or dispatch tables.
+Eviction only repeats resolution; it does not change defaults or routing.
 
 For nested fields, `bind_variants` captures the supplied leaves and returns
 Pydantic's `GetPydanticSchema` metadata. The metadata asks Pydantic to generate the
@@ -249,6 +253,31 @@ inputs (`from_attributes=True`) must provide all tag attributes explicitly. An
 after-model validator rejects unresolved default markers before validation can
 succeed, including when validating an open family. Native unchecked operations
 such as `model_construct()` do not run this guard and must supply tags explicitly.
+
+## JSON serialization contract
+
+Persistence and message interchange use Pydantic JSON round trips. For a family,
+reuse the assembled `TypeAdapter` for `dump_json()` and `validate_json()`. For a
+concrete model or envelope with explicitly bound family fields, use
+`model_dump_json()` and `model_validate_json()`. The reader must have the required
+variant definitions and binding; unknown discriminator values are rejected.
+Keep all routing tags and required payload fields in the serialized data.
+
+`model_dump()` defaults to Python mode and can contain objects such as UUIDs or
+datetimes. If a storage or messaging SDK performs JSON encoding, pass
+`model_dump(mode="json")` or `adapter.dump_python(mode="json")` instead.
+Serialization does not replace input validation: use validated instances and
+`warnings="error"` to surface serializer warnings. Custom serializers and lossy
+field exclusions can change round-trip behavior. Schema-version compatibility
+and migrations belong to the consumer; JSON does not make them automatic.
+
+Pickle is not suitable for this durable/interchange contract and is not a
+compatibility or acceptance requirement. It relies on Python object/import
+identity rather than the explicit discriminator schema; generic or local class
+importability is not guaranteed by typebind. No pickle-specific hooks are added.
+Persist model data only; rebuild plugin selection, adapters, and behavior objects
+in each receiving process. Unchecked `model_construct()` is not deserialization
+and does not supply the validated automatic-tag guarantees.
 
 ## Current boundaries
 

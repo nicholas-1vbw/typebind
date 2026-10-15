@@ -57,6 +57,21 @@ use `Annotated[Family[Any], bind_variants(variants)]` as described in the
 [model guide](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md). `Family[Any]` keeps common fields typed while allowing
 runtime-selected tags; concrete models retain exact `Literal` tags.
 
+## Serialization contract
+
+Use Pydantic JSON serialization and validation for persistence and messages:
+`adapter.dump_json()` / `adapter.validate_json()` for an assembled family, or
+`model_dump_json()` / `model_validate_json()` for a model with explicitly bound
+nested fields. Keep discriminator fields in the serialized data and configure
+the reader with the variants it accepts. When a storage SDK expects a dictionary,
+use `model_dump(mode="json")` (or `adapter.dump_python(mode="json")`).
+
+Pickle is not suitable for this persistence or interchange contract; pickle
+compatibility is not an acceptance requirement. Store data models, then reassemble
+behavior implementations in the receiving process. See the
+[serialization contract](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#json-serialization-contract)
+for scope and versioning boundaries.
+
 ## Choose an example
 
 From a development checkout, `uv run --locked` synchronizes the locked environment
@@ -133,8 +148,11 @@ includes the version in its cache key. It synchronizes locked dependencies once,
 then uses `uv run --no-sync` for each step. Local development
 defaults to `.python-version`; set `UV_PYTHON=3.12` when running `poe check` to
 check the minimum supported version. Strict Pyright targets Python 3.12.
-Local `poe check` remains the aggregate entry point. Its microbenchmark
-has no timing threshold and does not measure service throughput. Local passing
+Local `poe check` remains the aggregate entry point. `poe benchmark` runs model
+construction/JSON and behavior adaptation benchmarks; `poe benchmark-models` and
+`poe benchmark-behavior` run them separately. Model cases compare omitted and
+explicit tags at one and two levels, including named Literal aliases. Benchmarks
+have no timing threshold and do not measure service throughput. Local passing
 checks do not imply that hosted CI has passed. Development tools and example
 packages are in the development dependency group; the library's runtime
 requirements remain separate. Update `uv.lock` when dependencies change.

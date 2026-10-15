@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from functools import lru_cache
 from inspect import isabstract
 from typing import Annotated, Any, Self, TypeVar, cast
 
@@ -66,24 +67,30 @@ def _open_discriminator(model: type[DiscriminatedModel]) -> str | None:
     )
 
 
-def _literal_tag(model: type[DiscriminatedModel], name: str) -> str:
-    """Resolve a Literal or its alias to one non-empty string tag.
+@lru_cache(maxsize=128)
+def _literal_value(annotation: Any) -> str | None:
+    """Memoize Pydantic's singleton-tag resolution by field annotation.
 
-    Pydantic resolves the annotation. Raise TypeError if its schema does not
-    describe exactly one non-empty string literal.
+    The bounded cache keys derived values by annotation, not by model or field
+    path. Eviction merely repeats resolution. Named aliases retain Pydantic's
+    native semantics; invalid literal shapes return None for contextual errors.
     """
-    annotation = model.model_fields[name].annotation
-    message = (
-        f"{_model_name(model)}.{name}: a tag must be a single non-empty string Literal; "
-        f"got {annotation!r}. Select a tag with Family[Literal['tag']]."
-    )
-    # Let Pydantic resolve native typing forms, including named Literal aliases.
-    schema = TypeAdapter(cast(Any, annotation)).core_schema
+    schema = TypeAdapter(annotation).core_schema
     if schema["type"] != "literal" or len(schema["expected"]) != 1:
-        raise TypeError(message)
+        return None
     value: object = schema["expected"][0]
-    if not isinstance(value, str) or not value:
-        raise TypeError(message)
+    return value if isinstance(value, str) and value else None
+
+
+def _literal_tag(model: type[DiscriminatedModel], name: str) -> str:
+    """Read the authoritative field and resolve its tag with model-local diagnostics."""
+    annotation = model.model_fields[name].annotation
+    value = _literal_value(annotation)
+    if value is None:
+        raise TypeError(
+            f"{_model_name(model)}.{name}: a tag must be a single non-empty string Literal; "
+            f"got {annotation!r}. Select a tag with Family[Literal['tag']]."
+        )
     return value
 
 

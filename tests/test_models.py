@@ -1,7 +1,9 @@
 """Exercise declarations, dispatch, isolation, and serialization boundaries."""
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, assert_type, cast, get_type_hints
+from uuid import UUID
 
 import pytest
 from pydantic import (
@@ -17,6 +19,15 @@ from pydantic import (
 from typebind import DiscriminatedModel, bind_variants, build_adapter, tag_field
 
 type QueryTag = Literal["query"]
+type NestedQueryTag = QueryTag
+
+
+class FirstTags:
+    type Tag = Literal["first"]
+
+
+class SecondTags:
+    type Tag = Literal["second"]
 
 
 class Message[Kind: str](DiscriminatedModel):
@@ -639,3 +650,91 @@ def test_removed_inherited_tag_reports_its_declaration() -> None:
     assert "RemovedTag.kind:" in str(error.value)
     assert f"{Query.__module__}.{Query.__qualname__}" in str(error.value)
     assert "Keep the inherited model field" in str(error.value)
+
+
+def test_warm_defaults_do_not_rebuild_type_adapters(monkeypatch: pytest.MonkeyPatch) -> None:
+    class AliasQuery(Request[NestedQueryTag]):
+        expression: str
+
+    variants = [Query, Stream, AliasQuery]
+    samples = [
+        Query(identifier="q", sequence=1, expression="x"),
+        Stream(identifier="s", sequence=1, size=2, cursor="next"),
+        AliasQuery(identifier="a", sequence=1, expression="alias"),
+    ]
+    adapters = [build_adapter(Message[Any], variants=[variant]) for variant in variants]
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("Repeated construction must not compile tag schemas")
+
+    monkeypatch.setattr("typebind._models.TypeAdapter", forbidden)
+    for _ in range(5):
+        for sample, adapter in zip(samples, adapters, strict=True):
+            data = sample.model_dump(exclude={"kind", "method", "mode"})
+            assert type(sample)(**data) == sample
+            assert adapter.validate_json(adapter.dump_json(sample, warnings="error")) == sample
+    with pytest.raises(ValueError, match="Duplicate tag 'query'"):
+        bind_variants([Query, AliasQuery])
+
+
+def test_tag_resolution_eviction_preserves_defaults_and_alias_identity() -> None:
+    # Equal alias names in independent scopes must not conflate their values.
+    class FirstItem(Message[FirstTags.Tag]):
+        pass
+
+    class SecondItem(Message[SecondTags.Tag]):
+        pass
+
+    first_model, second_model = FirstItem, SecondItem
+    adapter = build_adapter(Message[Any], variants=[first_model, second_model, Query])
+    expected = [first_model(identifier="a"), second_model(identifier="b")]
+    # Exceed the bounded resolution cache using valid independent specializations.
+    for index in range(160):
+        annotation = cast(Any, Literal)[f"evict-{index}"]
+        specialized = cast(type[Message[Any]], Message.__class_getitem__(annotation))
+        assert specialized(identifier="e").kind == f"evict-{index}"
+    for model, item, tag in zip(
+        (first_model, second_model), expected, ("first", "second"), strict=True
+    ):
+        restored = adapter.validate_json(adapter.dump_json(item, warnings="error"))
+        assert type(restored) is model
+        assert restored == model(identifier=item.model_dump()["identifier"])
+        assert restored.model_dump()["kind"] == tag
+    query = Query(identifier="q", sequence=1, expression="x")
+    assert adapter.validate_json(adapter.dump_json(query)) == query
+    with pytest.raises(ValidationError, match="literal_error"):
+        Query.model_validate({**query.model_dump(), "method": "wrong"})
+
+
+def test_json_contract_restores_nested_payloads_and_rejects_unknown_tags() -> None:
+    class Record(Message[Literal["record"]]):
+        created_at: datetime
+        record_id: UUID
+
+    binding = bind_variants([Record, Ping])
+
+    class Envelope(BaseModel):
+        records: list[Annotated[Message[Any], binding]]
+
+    record = Record(
+        identifier="r",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        record_id=UUID("12345678-1234-5678-1234-567812345678"),
+    )
+    envelope = Envelope(records=[record, Ping(identifier="p")])
+    wire = envelope.model_dump_json(warnings="error")
+    restored = Envelope.model_validate_json(wire)
+    assert restored == envelope
+    assert type(restored.records[0]) is Record
+    assert type(restored.records[1]) is Ping
+    assert restored.records[0].created_at == record.created_at
+    assert restored.records[0].record_id == record.record_id
+    data = envelope.model_dump(mode="json", warnings="error")
+    assert isinstance(data["records"][0]["created_at"], str)
+    assert isinstance(data["records"][0]["record_id"], str)
+    assert Envelope.model_validate(data) == envelope
+    adapter = build_adapter(Message[Any], variants=[Record, Ping])
+    assert type(adapter.validate_json(adapter.dump_json(record))) is Record
+    limited = build_adapter(Message[Any], variants=[Ping])
+    with pytest.raises(ValidationError, match="union_tag_invalid"):
+        limited.validate_json(adapter.dump_json(record))
