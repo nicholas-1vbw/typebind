@@ -168,15 +168,20 @@ an explicit parameter under strict checking. Do not use `Request[str]` to mean
   frozen `Field` with a private default factory. Its factory identity identifies
   tag fields after Pydantic merges and specializes fields; no separate registry
   or custom metadata type is needed. The assigned default tells Pyright that
-  constructors can omit the tag. An inherited model-level before
-  validator copies mapping inputs when necessary and supplies missing bound tags
-  before any field validator runs. Explicit tag input is never replaced.
-- The factory returns an internal marker for native default comparison, so
-  `exclude_defaults=True` retains bound tags. `tag_field()` returns `Any`, like
-  Pydantic's `Field`, so it can be assigned to a generic field. The explicit field
-  annotation still determines consumer types; the private factory returns `object`. There is no JSON Schema `default`.
-  Automatically supplied tags appear in `model_fields_set` and remain included
-  with `exclude_unset=True`.
+  constructors can omit the tag. During schema generation, typebind reads the
+  specialized field annotation and replaces that factory's schema with a native
+  default and `validate_default=True`. Open tags become required fields. Explicit
+  values and automatic defaults both pass through the field's validators.
+- `tag_field()` returns `Any`, like Pydantic's `Field`, for assignment to a generic
+  field; the annotation still determines consumer types. The declaration factory
+  is a marker, not an instance-time default generator. `model_fields` continues to
+  expose that declaration; compiled validation and JSON Schema expose the derived
+  literal default. No typebind model validators, field scans, or annotation cache
+  are involved in instance construction.
+- Automatic tags follow native defaults: omitted fields do not enter
+  `model_fields_set`; `exclude_unset=True` omits them and `exclude_defaults=True`
+  omits values equal to the default, even when explicitly supplied. Ordinary dumps
+  retain tags. Do not use these lossy options for family interchange.
 - Discriminator fields are frozen at runtime to prevent retagging. Other fields
   remain mutable. Field-level freezing is not treated as a portable static
   read-only guarantee and is not used to justify covariance.
@@ -220,12 +225,11 @@ still harmless. Native Python and Pydantic errors retain their own diagnostics.
 native inheritance and resolved leaf fields, then passes the resulting type to
 a normal `TypeAdapter`. The MRO identifies family boundaries; `model_fields`
 provides discriminator names and Literal values. Duplicate checks and dispatch
-use the same local table. Automatic defaults also read `model_fields` directly,
-so there is no parallel class-level tag registry or cached path to synchronize.
-Pydantic resolves each field annotation to a singleton string tag. A bounded LRU
-cache (128 entries) reuses that derived result by annotation, including native
-named aliases. It does not add per-model tag state, field paths, or dispatch tables.
-Eviction only repeats resolution; it does not change defaults or routing.
+use the same local table. Automatic defaults are derived from the same fields
+when Pydantic generates the model's schema. The public schema hook replaces only
+marked defaults along the model's validator wrappers; payload schemas and native
+references are preserved. There is no parallel class-level tag registry, cached
+path, or annotation-result cache to synchronize.
 
 For nested fields, `bind_variants` captures the supplied leaves and returns
 Pydantic's `GetPydanticSchema` metadata. The metadata asks Pydantic to generate the
@@ -242,17 +246,20 @@ that changes a routing tag is not supported by this binding mechanism.
 
 Bindings and adapters capture independent variant snapshots. Their local dispatch
 tables and compiled schemas are derived artifacts, not separate declarations. Build a new binding or
-adapter when the variant set changes. No model schemas or adapter attributes are
-patched. Mutating model fields after declaration is outside this package's
+adapter when the variant set changes. No already compiled validators, serializers,
+or adapter attributes are patched. Mutating model fields after declaration is outside this package's
 contract; this does not provide live schema synchronization. Native
 `TypeAdapter.rebuild(force=True)`, JSON Schema generation,
 validation, and serialization operate on the actual union annotation.
 
-Automatic tags support constructors, JSON, and mapping inputs. Attribute-object
-inputs (`from_attributes=True`) must provide all tag attributes explicitly. An
-after-model validator rejects unresolved default markers before validation can
-succeed, including when validating an open family. Native unchecked operations
-such as `model_construct()` do not run this guard and must supply tags explicitly.
+Automatic tags support constructors, JSON, mappings, and attribute-object inputs
+(`from_attributes=True`) when validating a concrete model. An open family still
+requires its tag, and a discriminated union must read routing tags before selecting
+any leaf defaults. User model validators retain Pydantic's native ordering: a
+before-model validator sees the original input, before defaults are applied.
+Unchecked `model_construct()` does not execute the compiled schema and must supply
+tags explicitly; the declaration factory raises if called rather than returning
+an unresolved sentinel. It is not a persistence/deserialization API.
 
 ## JSON serialization contract
 
@@ -261,7 +268,11 @@ reuse the assembled `TypeAdapter` for `dump_json()` and `validate_json()`. For a
 concrete model or envelope with explicitly bound family fields, use
 `model_dump_json()` and `model_validate_json()`. The reader must have the required
 variant definitions and binding; unknown discriminator values are rejected.
-Keep all routing tags and required payload fields in the serialized data.
+Ordinary model and adapter dumps retain all routing tags. Keep those tags and
+required payload fields in serialized records. `exclude_unset=True`,
+`exclude_defaults=True`, and explicit field exclusions can remove tags; such
+outputs cannot be relied on for family round trips. Native union validation
+rejects missing tags with `union_tag_not_found` before selecting a concrete model.
 
 `model_dump()` defaults to Python mode and can contain objects such as UUIDs or
 datetimes. If a storage or messaging SDK performs JSON encoding, pass
@@ -282,8 +293,9 @@ and does not supply the validated automatic-tag guarantees.
 ## Current boundaries
 
 The declaration hook reads Pydantic's generic metadata to identify the originating
-family. Union generation uses public Pydantic APIs and no schema rewriting or
-private compiler options. The supported Pydantic minor series is specified in
+family. Default generation uses the public core-schema hook and native
+`with_default_schema`; union generation uses public Pydantic APIs. No private
+compiler options or custom generic-class creation are used. The supported Pydantic minor series is specified in
 `pyproject.toml`; reassess generic metadata compatibility before widening it.
 
 Each family has one discriminator type parameter. Additional payload type

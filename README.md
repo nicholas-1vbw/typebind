@@ -63,7 +63,9 @@ Use Pydantic JSON serialization and validation for persistence and messages:
 `adapter.dump_json()` / `adapter.validate_json()` for an assembled family, or
 `model_dump_json()` / `model_validate_json()` for a model with explicitly bound
 nested fields. Keep discriminator fields in the serialized data and configure
-the reader with the variants it accepts. When a storage SDK expects a dictionary,
+the reader with the variants it accepts. Ordinary dumps retain tags. Native
+`exclude_unset=True` / `exclude_defaults=True` can omit them, so do not use those
+options for family interchange. When a storage SDK expects a dictionary,
 use `model_dump(mode="json")` (or `adapter.dump_python(mode="json")`).
 
 Pickle is not suitable for this persistence or interchange contract; pickle
@@ -152,7 +154,9 @@ check the minimum supported version. Strict Pyright targets Python 3.12.
 Local `poe check` remains the aggregate entry point. `poe benchmark` runs model
 construction/JSON and behavior adaptation benchmarks; `poe benchmark-models` and
 `poe benchmark-behavior` run them separately. Model cases compare omitted and
-explicit tags at one and two levels, including named Literal aliases. Benchmarks
+explicit tags at one and two levels, including named Literal aliases, against
+ordinary Pydantic models with matching frozen fields and `validate_default=True`.
+Benchmarks
 have no timing threshold and do not measure service throughput. Local passing
 checks do not imply that hosted CI has passed. Development tools and example
 packages are in the development dependency group; the library's runtime

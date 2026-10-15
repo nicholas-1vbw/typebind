@@ -9,7 +9,7 @@ from statistics import median
 from timeit import Timer
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
 from typebind import DiscriminatedModel, bind_variants, build_adapter, tag_field
 
@@ -43,6 +43,29 @@ class AliasQuery(Request[QueryTag]):
     pass
 
 
+# Native controls have the same field order, frozen tags, and default validation.
+class NativeEvent(BaseModel):
+    kind: Literal["event"] = Field(default="event", frozen=True, validate_default=True)
+    value: int
+
+
+class NativeQuery(BaseModel):
+    kind: Literal["request"] = Field(default="request", frozen=True, validate_default=True)
+    value: int
+    method: Literal["query"] = Field(default="query", frozen=True, validate_default=True)
+
+
+class NativeAliasEvent(BaseModel):
+    kind: EventTag = Field(default="alias-event", frozen=True, validate_default=True)
+    value: int
+
+
+class NativeAliasQuery(BaseModel):
+    kind: Literal["request"] = Field(default="request", frozen=True, validate_default=True)
+    value: int
+    method: QueryTag = Field(default="alias-query", frozen=True, validate_default=True)
+
+
 binding = bind_variants([Event, Query, AliasEvent, AliasQuery])
 
 
@@ -67,11 +90,29 @@ cases: dict[str, Callable[[], object]] = {
     "alias_single_explicit": lambda: AliasEvent(kind="alias-event", value=1),
     "alias_multi_omit": lambda: AliasQuery(value=1),
     "alias_multi_explicit": lambda: AliasQuery(kind="request", method="alias-query", value=1),
+    "native_single_omit": lambda: NativeEvent(value=1),
+    "native_single_explicit": lambda: NativeEvent(kind="event", value=1),
+    "native_multi_omit": lambda: NativeQuery(value=1),
+    "native_multi_explicit": lambda: NativeQuery(kind="request", method="query", value=1),
+    "native_alias_single_omit": lambda: NativeAliasEvent(value=1),
+    "native_alias_single_explicit": lambda: NativeAliasEvent(kind="alias-event", value=1),
+    "native_alias_multi_omit": lambda: NativeAliasQuery(value=1),
+    "native_alias_multi_explicit": lambda: NativeAliasQuery(
+        kind="request", method="alias-query", value=1
+    ),
     "family_validate_json": lambda: family_adapter.validate_json(wire),
     "nested_json_roundtrip": lambda: envelope_adapter.validate_json(
         envelope_adapter.dump_json(envelope, warnings="error")
     ),
 }
+for custom, native in (
+    (Event, NativeEvent),
+    (Query, NativeQuery),
+    (AliasEvent, NativeAliasEvent),
+    (AliasQuery, NativeAliasQuery),
+):
+    assert custom(value=1).model_dump() == native(value=1).model_dump()
+
 results: dict[str, dict[str, float | list[float]]] = {}
 medians: dict[str, float] = {}
 for name, operation in cases.items():
@@ -97,6 +138,14 @@ print(
                 "excludes assembly, I/O and concurrency."
             ),
             "results": results,
+            "typebind_to_native_omitted_ratio": {
+                name: medians[f"{name}_omit"] / medians[f"native_{name}_omit"]
+                for name in ("single", "multi", "alias_single", "alias_multi")
+            },
+            "typebind_to_native_explicit_ratio": {
+                name: medians[f"{name}_explicit"] / medians[f"native_{name}_explicit"]
+                for name in ("single", "multi", "alias_single", "alias_multi")
+            },
             "omit_to_explicit_ratio": {
                 name: medians[f"{name}_omit"] / medians[f"{name}_explicit"]
                 for name in ("single", "multi", "alias_single", "alias_multi")
