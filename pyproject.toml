@@ -3,13 +3,16 @@ name = "typebind"
 version = "0.1.0"
 description = "Typed Pydantic model families, plugin discovery, and scoped behavior adapters."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["pydantic", "discriminator", "generics", "plugins", "adapters"]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -104,7 +107,7 @@ src = ["src"]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pyright]
-pythonVersion = "3.14"
+pythonVersion = "3.12"
 typeCheckingMode = "strict"
 include = ["src", "tests", "examples", "benchmarks", "scripts"]
 venvPath = "."

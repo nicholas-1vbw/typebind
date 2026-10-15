@@ -177,7 +177,7 @@ def test_no_reflection_discovery_or_validation_in_hot_path(monkeypatch: pytest.M
         "family_base",
         "concrete_model",
     ):
-        monkeypatch.setattr(f"typebind.behavior.{name}", forbidden)
+        monkeypatch.setattr(f"typebind._behavior.{name}", forbidden)
     monkeypatch.setattr(metadata, "entry_points", forbidden)
     monkeypatch.setattr(Query, "model_validate", forbidden)
     for _ in range(10):

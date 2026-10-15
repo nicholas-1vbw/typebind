@@ -5,8 +5,8 @@ from importlib import metadata
 from itertools import chain
 from typing import Any, NamedTuple, cast
 
-from ._core import DiscriminatedModel, family_base
-from .behavior import Implementation
+from ._behavior import Implementation
+from ._models import DiscriminatedModel, family_base
 
 
 class DiscoveredVariant(NamedTuple):

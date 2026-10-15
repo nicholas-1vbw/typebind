@@ -286,7 +286,7 @@ def test_recursive_family_fields() -> None:
         value: int
 
     class Group(Node[Literal["group"]]):
-        children: list[Annotated[Leaf | Group, Field(discriminator="kind")]]
+        children: list[Annotated["Leaf | Group", Field(discriminator="kind")]]
 
     adapter = build_adapter(Node[Any], variants=[Leaf, Group])
     node = adapter.validate_python(

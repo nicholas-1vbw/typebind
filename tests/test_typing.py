@@ -157,7 +157,7 @@ DiscoveredVariant(Document, discovered[0].entry_point)
 
 def test_strict_downstream_typing(tmp_path: Path) -> None:
     (tmp_path / "pyrightconfig.json").write_text(
-        json.dumps({"typeCheckingMode": "strict", "pythonVersion": "3.14"})
+        json.dumps({"typeCheckingMode": "strict", "pythonVersion": "3.12"})
     )
     sample = tmp_path / "consumer.py"
     sample.write_text(SOURCE)

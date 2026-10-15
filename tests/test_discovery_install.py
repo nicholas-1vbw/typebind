@@ -169,7 +169,7 @@ assert_type(runtime.adapt(value, Executable).execute(), str)
     example.write_text((root / "examples/discovery.py").read_text())
     run(str(python), str(example))
     config.write_text(
-        '{"typeCheckingMode":"strict","pythonVersion":"3.14",'
+        '{"typeCheckingMode":"strict","pythonVersion":"3.12",'
         '"include":["typed_consumer.py","discovery.py"]}'
     )
     run(sys.executable, "-m", "pyright", "--project", str(config), "--pythonpath", str(python))

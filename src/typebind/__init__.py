@@ -1,8 +1,7 @@
 """Explicit, hierarchical discriminated models backed by Pydantic."""
 
-from ._core import DiscriminatedModel, bind_variants, build_adapter, tag_field
-from .behavior import BehaviorAdapter, Implementation, assemble
-from .discovery import (
+from ._behavior import BehaviorAdapter, Implementation, assemble
+from ._discovery import (
     DiscoveredImplementation,
     DiscoveredVariant,
     discover,
@@ -10,6 +9,7 @@ from .discovery import (
     select_implementations,
     select_variants,
 )
+from ._models import DiscriminatedModel, bind_variants, build_adapter, tag_field
 
 __all__ = [
     "BehaviorAdapter",

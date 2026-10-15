@@ -10,14 +10,12 @@ from typing import (
     cast,
     get_args,
     get_origin,
-    get_protocol_members,
     get_type_hints,
-    is_protocol,
 )
 
-from typing_extensions import TypeForm
+from typing_extensions import TypeForm, get_protocol_members, is_protocol
 
-from ._core import DiscriminatedModel, concrete_model, family_base
+from ._models import DiscriminatedModel, concrete_model, family_base
 
 
 def _name(cls: type[object]) -> str:

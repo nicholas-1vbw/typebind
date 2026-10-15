@@ -54,7 +54,7 @@ def test_strict_behavior_consumers(tmp_path: Path) -> None:
         json.dumps(
             {
                 "typeCheckingMode": "strict",
-                "pythonVersion": "3.14",
+                "pythonVersion": "3.12",
             }
         )
     )

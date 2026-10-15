@@ -6,7 +6,7 @@ choose their variants explicitly, or load them from installed entry points.
 
 ## Install
 
-Python 3.14 or later is required. This project is preparing its first release and
+Python 3.12 or later is required. This project is preparing its first release and
 has not been published to PyPI. From a local checkout:
 
 ```sh
@@ -98,6 +98,9 @@ The discovery example installs real [example packages](https://github.com/nichol
 dependencies and fails when they are missing. These packages are not typebind
 runtime dependencies and are not shipped inside its wheel.
 
+Import public APIs from `typebind`. The `_models`, `_behavior`, and `_discovery`
+modules are internal implementation details.
+
 ## Guides and contracts
 
 - [Models](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md): multilevel discriminators, aliases, nested unions, duplicate tags and validation boundaries.
@@ -124,9 +127,12 @@ nested round trips and strict typing against installed wheels. The native build
 creates a wheel from the sdist; artifact checks verify metadata, MIT, `py.typed`,
 source contents, and clean-environment execution outside the checkout.
 
-[CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps on Linux, macOS and Windows.
-It synchronizes locked dependencies once, then uses `uv run --no-sync` for each
-step. Local `poe check` remains the aggregate entry point. Its microbenchmark
+[CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps for Python 3.12–3.15 on Linux, macOS and Windows.
+Each job selects its Python version through `UV_PYTHON`, synchronizes locked
+dependencies once, then uses `uv run --no-sync` for each step. Local development
+defaults to `.python-version`; set `UV_PYTHON=3.12` when running `poe check` to
+check the minimum supported version. Strict Pyright targets Python 3.12.
+Local `poe check` remains the aggregate entry point. Its microbenchmark
 has no timing threshold and does not measure service throughput. Local passing
 checks do not imply that hosted CI has passed. Development tools and example
 packages are in the development dependency group; the library's runtime

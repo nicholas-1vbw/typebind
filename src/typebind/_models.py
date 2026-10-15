@@ -1,5 +1,7 @@
 """Native generic declarations and explicit Pydantic discriminated unions."""
 
+from __future__ import annotations
+
 from collections.abc import Iterable, Mapping
 from inspect import isabstract
 from typing import Annotated, Any, Self, TypeVar, cast

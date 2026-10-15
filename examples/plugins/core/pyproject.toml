@@ -2,7 +2,7 @@
 name = "typebind-example-core"
 version = "0.1.0"
 description = "Local typebind discovery example; not intended for publication."
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = ["typebind>=0.1.0"]
 
 [build-system]
