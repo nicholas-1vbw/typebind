@@ -128,8 +128,9 @@ creates a wheel from the sdist; artifact checks verify metadata, MIT, `py.typed`
 source contents, and clean-environment execution outside the checkout.
 
 [CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps for Python 3.12–3.15 on Linux, macOS and Windows.
-Each job selects its Python version through `UV_PYTHON`, synchronizes locked
-dependencies once, then uses `uv run --no-sync` for each step. Local development
+Each job passes its Python version to `setup-uv`, which sets `UV_PYTHON` and
+includes the version in its cache key. It synchronizes locked dependencies once,
+then uses `uv run --no-sync` for each step. Local development
 defaults to `.python-version`; set `UV_PYTHON=3.12` when running `poe check` to
 check the minimum supported version. Strict Pyright targets Python 3.12.
 Local `poe check` remains the aggregate entry point. Its microbenchmark
