@@ -466,8 +466,8 @@ def test_automatic_defaults_reach_inherited_field_validators_as_strings() -> Non
     assert original == {"value": 1}
     assert Item(value=1) == item
     assert Item.model_validate_json('{"value":1}') == item
-    assert item.model_fields_set == {"value"}
-    assert item.model_dump(exclude_unset=True) == {"value": 1}
+    assert item.model_fields_set == {"kind", "value"}
+    assert item.model_dump(exclude_unset=True) == {"kind": "item", "value": 1}
     assert item.model_dump(exclude_defaults=True) == {"value": 1}
     adapter = TypeAdapter(Item)
     wire = adapter.dump_json(item, exclude_defaults=True)
@@ -754,7 +754,10 @@ def test_native_defaults_survive_recursive_and_deferred_rebuild(deferred: bool) 
     assert Tree.model_rebuild(force=True)
     assert Tree(identifier="new").kind == "tree"
     assert adapter.rebuild(force=True)
-    assert adapter.validate_json(adapter.dump_json(tree)) == tree
+    assert adapter.validate_json(adapter.dump_json(tree, exclude_unset=True)) == tree
+    assert Tree.model_validate_json(tree.model_dump_json(exclude_unset=True)) == tree
+    assert {"kind"} <= tree.model_fields_set
+    assert {"kind"} <= tree.children[0].model_fields_set
 
 
 def test_defaults_preserve_validator_order_context_and_single_execution() -> None:
@@ -779,6 +782,7 @@ def test_defaults_preserve_validator_order_context_and_single_execution() -> Non
 
         @model_validator(mode="after")
         def after(self) -> "Checked[Kind]":
+            assert "kind" in self.model_fields_set
             events.append("after")
             return self
 
@@ -813,10 +817,11 @@ def test_normal_dumps_keep_tags_and_lossy_dumps_do_not_dispatch() -> None:
     assert Document.model_validate_json(document.model_dump_json()) == document
     assert adapter.dump_python(query)["method"] == "query"
     assert adapter.validate_json(adapter.dump_json(query)) == query
-    assert query.model_fields_set == {"identifier", "sequence", "expression"}
+    assert query.model_fields_set == {"kind", "method", "identifier", "sequence", "expression"}
+    assert adapter.validate_json(adapter.dump_json(query, exclude_unset=True)) == query
     for wire in (
         adapter.dump_json(query, exclude_defaults=True),
-        adapter.dump_json(query, exclude_unset=True),
+        adapter.dump_json(query, exclude={"kind"}),
     ):
         with pytest.raises(ValidationError, match="union_tag_not_found"):
             adapter.validate_json(wire)
@@ -835,3 +840,75 @@ def test_unchecked_construction_requires_explicit_tags_without_leaking_markers()
         kind="request", method="query", identifier="q", sequence=1, expression="x"
     )
     assert query == Query(identifier="q", sequence=1, expression="x")
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_unset_dumps_preserve_multilevel_identity_and_skip_payload_defaults(explicit: bool) -> None:
+    class DetailedStream(Stream):
+        note: str = "default note"
+
+    binding = bind_variants([Query, DetailedStream, Ping])
+
+    class Envelope(BaseModel):
+        primary: Annotated[Message[Any], binding]
+        values: list[Annotated[Message[Any], binding]]
+        by_name: dict[str, Annotated[Message[Any], binding]]
+        optional: Annotated[Message[Any], binding] | None = None
+        note: str = "envelope default"
+
+    data: dict[str, object] = {"identifier": "s", "sequence": 1, "size": 2, "cursor": "next"}
+    if explicit:
+        data.update(kind="request", method="batch", mode="stream")
+    item = DetailedStream.model_validate(data)
+    assert {"kind", "method", "mode"} <= item.model_fields_set
+    assert "note" not in item.model_fields_set
+    envelope = Envelope(primary=item, values=[item], by_name={"s": item}, optional=item)
+    payload = envelope.model_dump(exclude_unset=True)
+    assert "note" not in payload
+    for nested in (
+        payload["primary"],
+        payload["values"][0],
+        payload["by_name"]["s"],
+        payload["optional"],
+    ):
+        assert {key: nested[key] for key in ("kind", "method", "mode")} == {
+            "kind": "request",
+            "method": "batch",
+            "mode": "stream",
+        }
+        assert "note" not in nested
+    assert Envelope.model_validate(payload) == envelope
+    assert Envelope.model_validate_json(envelope.model_dump_json(exclude_unset=True)) == envelope
+    adapter = TypeAdapter(Envelope)
+    assert adapter.validate_json(adapter.dump_json(envelope, exclude_unset=True)) == envelope
+    # Explicit exclusions, including combined flags, still have native precedence.
+    excluded = item.model_dump(exclude_unset=True, exclude={"kind"})
+    assert "kind" not in excluded and excluded["mode"] == "stream"
+    assert "kind" not in item.model_dump(exclude_unset=True, exclude_defaults=True)
+    assert item.model_dump(exclude_unset=True, include={"identifier"}) == {"identifier": "s"}
+
+
+def test_bound_identity_is_marked_for_attributes_aliases_and_open_views() -> None:
+    class AliasQuery(Request[NestedQueryTag]):
+        expression: str = "default expression"
+
+    item = AliasQuery.model_validate(
+        SimpleNamespace(identifier="a", sequence=1), from_attributes=True
+    )
+    assert item.model_dump(exclude_unset=True) == {
+        "kind": "request",
+        "method": "query",
+        "identifier": "a",
+        "sequence": 1,
+    }
+    adapter = build_adapter(Message[Any], variants=[AliasQuery])
+    assert adapter.validate_json(adapter.dump_json(item, exclude_unset=True)) == item
+    open_view = Request[Any](method="custom", identifier="r", sequence=1)
+    assert open_view.model_dump(exclude_unset=True) == {
+        "kind": "request",
+        "method": "custom",
+        "identifier": "r",
+        "sequence": 1,
+    }
+    with pytest.raises(ValidationError, match="Field required"):
+        Request[Any](identifier="r", sequence=1)

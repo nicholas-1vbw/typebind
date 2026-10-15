@@ -16,6 +16,8 @@ from pydantic import (
 from pydantic.fields import FieldInfo
 from pydantic_core import CoreSchema, core_schema
 
+type _ValidatedFields = tuple[dict[str, Any], dict[str, Any] | None, set[str]]
+
 
 def _tag_default() -> object:
     """Identify tag declarations; unchecked construction must supply tags itself."""
@@ -27,8 +29,9 @@ def tag_field() -> Any:
 
     The private default factory identifies tag fields after native field merging
     and generic substitution. Schema generation replaces it with a validated
-    native default for bound tags, or a required field for open tags. No factory
-    or typebind validator runs during normal instance construction.
+    native default for bound tags, or a required field for open tags. A compiled
+    callback marks bound tags as set after field validation, without scanning
+    declarations or resolving annotations during instance construction.
 
     Like Pydantic's Field, this helper returns Any for assignment to a typed
     field. The explicit annotation owns the field and constructor argument types;
@@ -88,6 +91,7 @@ def _with_tag_defaults(schema: CoreSchema, model: type[DiscriminatedModel]) -> C
     if schema["type"] == "model-fields":
         inner = schema
         fields = dict(inner["fields"])
+        bound_fields: list[str] = []
         for name, field in _tag_fields(model).items():
             original = fields[name]["schema"]
             # Pydantic can hand the hook an existing schema when embedding a model.
@@ -101,8 +105,20 @@ def _with_tag_defaults(schema: CoreSchema, model: type[DiscriminatedModel]) -> C
                 resolved = core_schema.with_default_schema(
                     resolved, default=_literal_tag(model, name), validate_default=True
                 )
+                bound_fields.append(name)
             fields[name] = {**fields[name], "schema": resolved}
-        return {**inner, "fields": fields}
+        updated_fields: core_schema.ModelFieldsSchema = {**inner, "fields": fields}
+        if not bound_fields:
+            return updated_fields
+        bound_names = tuple(bound_fields)
+
+        def mark_bound_tags(result: _ValidatedFields) -> _ValidatedFields:
+            # model-fields returns (values, extras, fields_set). The model validator
+            # installs this set on the instance; unrelated defaults stay unset.
+            result[2].update(bound_names)
+            return result
+
+        return core_schema.no_info_after_validator_function(mark_bound_tags, updated_fields)
     if schema["type"] == "model":
         return {**schema, "schema": _with_tag_defaults(schema["schema"], model)}
     if schema["type"] in ("function-before", "function-after", "function-wrap"):
@@ -139,8 +155,9 @@ class DiscriminatedModel(BaseModel):
 
         Pydantic owns validation, serialization, and generic substitution. Bound
         defaults validate like explicit inputs; open tags remain required. This
-        hook adds no per-instance work and never mutates model_fields or an
-        already compiled validator/serializer.
+        hook compiles the bound field names into one set-update callback, so tag
+        identity survives exclude_unset without instance-time reflection. It never
+        mutates model_fields or an already compiled validator/serializer.
         """
         return _with_tag_defaults(handler(source), cls)
 

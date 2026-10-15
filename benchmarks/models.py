@@ -7,9 +7,9 @@ import sys
 from collections.abc import Callable
 from statistics import median
 from timeit import Timer
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 from typebind import DiscriminatedModel, bind_variants, build_adapter, tag_field
 
@@ -66,6 +66,35 @@ class NativeAliasQuery(BaseModel):
     method: QueryTag = Field(default="alias-query", frozen=True, validate_default=True)
 
 
+# Semantic controls add the same fields-set guarantee through ordinary validators.
+class MarkedEvent(NativeEvent):
+    @model_validator(mode="after")
+    def mark_identity(self) -> Self:
+        self.model_fields_set.update(("kind",))
+        return self
+
+
+class MarkedQuery(NativeQuery):
+    @model_validator(mode="after")
+    def mark_identity(self) -> Self:
+        self.model_fields_set.update(("kind", "method"))
+        return self
+
+
+class MarkedAliasEvent(NativeAliasEvent):
+    @model_validator(mode="after")
+    def mark_identity(self) -> Self:
+        self.model_fields_set.update(("kind",))
+        return self
+
+
+class MarkedAliasQuery(NativeAliasQuery):
+    @model_validator(mode="after")
+    def mark_identity(self) -> Self:
+        self.model_fields_set.update(("kind", "method"))
+        return self
+
+
 binding = bind_variants([Event, Query, AliasEvent, AliasQuery])
 
 
@@ -79,6 +108,7 @@ query = Query(value=1)
 wire = family_adapter.dump_json(query)
 envelope = Envelope(messages=[Event(value=2), query, AliasQuery(value=3)])
 assert family_adapter.validate_json(wire) == query
+assert family_adapter.validate_json(family_adapter.dump_json(query, exclude_unset=True)) == query
 assert envelope_adapter.validate_json(envelope_adapter.dump_json(envelope)) == envelope
 
 cases: dict[str, Callable[[], object]] = {
@@ -100,6 +130,19 @@ cases: dict[str, Callable[[], object]] = {
     "native_alias_multi_explicit": lambda: NativeAliasQuery(
         kind="request", method="alias-query", value=1
     ),
+    "marked_single_omit": lambda: MarkedEvent(value=1),
+    "marked_single_explicit": lambda: MarkedEvent(kind="event", value=1),
+    "marked_multi_omit": lambda: MarkedQuery(value=1),
+    "marked_multi_explicit": lambda: MarkedQuery(kind="request", method="query", value=1),
+    "marked_alias_single_omit": lambda: MarkedAliasEvent(value=1),
+    "marked_alias_single_explicit": lambda: MarkedAliasEvent(kind="alias-event", value=1),
+    "marked_alias_multi_omit": lambda: MarkedAliasQuery(value=1),
+    "marked_alias_multi_explicit": lambda: MarkedAliasQuery(
+        kind="request", method="alias-query", value=1
+    ),
+    "nested_unset_json_roundtrip": lambda: envelope_adapter.validate_json(
+        envelope_adapter.dump_json(envelope, exclude_unset=True, warnings="error")
+    ),
     "family_validate_json": lambda: family_adapter.validate_json(wire),
     "nested_json_roundtrip": lambda: envelope_adapter.validate_json(
         envelope_adapter.dump_json(envelope, warnings="error")
@@ -112,6 +155,16 @@ for custom, native in (
     (AliasQuery, NativeAliasQuery),
 ):
     assert custom(value=1).model_dump() == native(value=1).model_dump()
+
+for custom, marked in (
+    (Event, MarkedEvent),
+    (Query, MarkedQuery),
+    (AliasEvent, MarkedAliasEvent),
+    (AliasQuery, MarkedAliasQuery),
+):
+    assert custom(value=1).model_dump(exclude_unset=True) == marked(value=1).model_dump(
+        exclude_unset=True
+    )
 
 results: dict[str, dict[str, float | list[float]]] = {}
 medians: dict[str, float] = {}
@@ -144,6 +197,14 @@ print(
             },
             "typebind_to_native_explicit_ratio": {
                 name: medians[f"{name}_explicit"] / medians[f"native_{name}_explicit"]
+                for name in ("single", "multi", "alias_single", "alias_multi")
+            },
+            "typebind_to_marked_omitted_ratio": {
+                name: medians[f"{name}_omit"] / medians[f"marked_{name}_omit"]
+                for name in ("single", "multi", "alias_single", "alias_multi")
+            },
+            "typebind_to_marked_explicit_ratio": {
+                name: medians[f"{name}_explicit"] / medians[f"marked_{name}_explicit"]
                 for name in ("single", "multi", "alias_single", "alias_multi")
             },
             "omit_to_explicit_ratio": {
