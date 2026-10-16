@@ -24,11 +24,11 @@ builds and isolated wheel verification. Run focused tasks while developing:
 ```sh
 uv run --no-sync poe test
 uv run --no-sync pytest -m integration
-uv run --no-sync poe example-manual
-uv run --no-sync poe example-discovery
-uv run --no-sync poe example-decorators
 uv run --no-sync poe benchmark
 ```
+
+See [Examples](examples/README.md) for individual example commands and what each
+script demonstrates.
 
 The test task reports branch coverage and missing lines as diagnostics; there is
 no percentage gate. The `integration` marker selects the installed-distribution

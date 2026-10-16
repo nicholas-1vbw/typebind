@@ -1,7 +1,7 @@
 # Interfaces and behavior assembly
 
-[Back to README](../README.md). Run `uv run --locked poe example-manual` for two
-models and two interfaces with no discovery calls. The snippets below use
+[Back to README](../README.md). See the [manual assembly example](../examples/README.md#models-and-manual-assembly)
+for two models and two interfaces with no discovery calls. The snippets below use
 `Message`, `Query`, and `query` from [the model guide](models.md).
 
 ## Behavior assembly
@@ -51,9 +51,6 @@ when those interfaces bind to different ancestor families. Native generic
 forwarding through intermediate implementation bases is supported; there must
 ultimately be one concrete model target. Models do not inherit these interfaces.
 
-The complete runnable example has one `Command` family, `Uppercase` and `Add`
-models, and `Describable` and `Executable` interfaces. See
-[the declarations](../examples/commands.py) and [the manual consumer](../examples/manual.py).
 Both `variants` and `implementations` are ordinary tuples. No discovery or
 publication metadata is needed. Use [entry point discovery](discovery.md) when
 other packages should supply these tuples.

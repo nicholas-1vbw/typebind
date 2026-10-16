@@ -4,41 +4,13 @@
 `build_adapter`, `bind_variants`, and `assemble` APIs used by manual composition.
 It is optional; installing a plugin does not change an existing adapter.
 
-The core plugin example uses `IdentityDiscriminatedModel` for messages and
-`DiscriminatedModel` for templates. Discovery and behavior assembly accept both
-through their shared base; the choice only changes automatic identity marking
-and unset exports. See [model export policies](models.md#choosing-export-semantics).
+For the runnable two-package example, including setup, commands and package
+contents, see [cross-package discovery](../examples/README.md#cross-package-discovery).
 
-## Run the cross-package example
+## Package layout
 
-From the repository root:
-
-```sh
-uv run --locked poe example-discovery
-```
-
-The root development group installs two local example distributions through
-native `tool.uv.sources` path sources. They are not runtime dependencies of
-`typebind`, and they are not included in its wheel. There is no extra workspace
-or per-example lockfile. The examples use ordinary installed entry point metadata:
-
-| Distribution | Contents |
-| --- | --- |
-| [typebind-example-core](../examples/plugins/core/pyproject.toml) | Defines the `Message` / `Request` and `Template` families and interfaces; publishes `Query`, `BasicTemplate`, and `QueryObject` |
-| [typebind-example-extra](../examples/plugins/extra/pyproject.toml) | Publishes `Write(Request[Literal["write"]])` and `WriteObject`, importing the shared contract from core |
-
-[The consumer](../examples/discovery.py) makes one batch discovery call, selects
-both top-level and intermediate families, assembles the two interfaces, and
-round-trips a nested envelope. It asserts that both distributions were found;
-it supplies no `extra_variants` or `extra_implementations`. Missing plugins fail
-instead of silently falling back to local classes.
-
-The installed-distribution test builds these same projects into wheels and
-installs them with a `typebind` wheel in a clean environment. It runs the consumer
-outside the checkout and checks its types against the installed packages.
-
-To use this pattern in another project, put the family and interface contracts in
-a shared package, declare dependencies on that package from its extensions, and
+Put the family and interface contracts in a shared package, declare dependencies
+on that package from its extensions, and
 publish exports in each extension's `project.entry-points`. Install the providing
 packages before running discovery. Group names are conventions chosen by the
 application and its plugin authors; typebind does not reserve them.
