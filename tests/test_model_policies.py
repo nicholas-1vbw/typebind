@@ -1,5 +1,7 @@
 """Verify native and identity export policies share routing without runtime switches."""
 
+import copy
+import sys
 from typing import Annotated, Any, Literal
 
 import pytest
@@ -42,13 +44,13 @@ class IdentityQuery(IdentityRequest[QueryTag]):
     note: str = "default"
 
 
-def test_native_schema_has_no_marking_callback_or_derived_names() -> None:
+def test_native_schema_has_no_marking_callback() -> None:
     # With no user validators, the native policy compiles straight to model-fields.
     schema = TypeAdapter(NativeQuery).core_schema
     assert schema["type"] == "model"
     assert schema["schema"]["type"] == "model-fields"
     assert not hasattr(NativeQuery, "_mark_bound_tags")
-    assert not hasattr(NativeQuery, "_bound_tag_names")
+    assert vars(NativeQuery)["_bound_tag_names"] == ("kind", "method")
     assert not hasattr(DiscriminatedModel, "_mark_bound_tags")
     assert NativeQuery(text="x").model_fields_set == {"text"}
     assert IdentityQuery(text="x").model_fields_set == {"kind", "method", "text"}
@@ -99,3 +101,90 @@ def test_both_export_policies_preserve_native_defaults_and_nested_routing(
     else:
         with pytest.raises(ValidationError, match="union_tag_not_found"):
             Envelope.model_validate_json(unset_wire)
+
+
+@pytest.mark.parametrize("model_type", [NativeQuery, IdentityQuery])
+@pytest.mark.parametrize("deep", [False, True])
+def test_copy_rejects_all_bound_tag_updates(
+    model_type: type[NativeQuery] | type[IdentityQuery], deep: bool
+) -> None:
+    value = model_type(text="original")
+    before = value.model_dump()
+    fields_set = value.model_fields_set.copy()
+    for name, expected in (("kind", "request"), ("method", "query")):
+        # Both equality and retagging are rejected; mixing in payload edits is atomic.
+        for tag in (expected, "wrong"):
+            with pytest.raises(ValueError, match=rf"{name}.*cannot update a bound discriminator"):
+                value.model_copy(update={name: tag, "text": "changed"}, deep=deep)
+            with pytest.raises(ValidationError, match="frozen_field"):
+                setattr(value, name, tag)
+    assert value.model_dump() == before
+    assert value.model_fields_set == fields_set
+    for update in (None, {}, {"text": "changed"}):
+        copied = value.model_copy(update=update, deep=deep)
+        assert type(copied) is model_type
+        assert copied is not value
+        assert copied.kind == "request" and copied.method == "query"
+        assert model_type.model_validate_json(copied.model_dump_json()) == copied
+
+
+def test_copy_preserves_native_payload_and_extra_semantics() -> None:
+    class Payload(NativeQuery, extra="allow"):
+        items: list[int]
+
+    value = Payload.model_validate({"text": "x", "items": [1], "extra": [2]})
+    shallow = value.model_copy()
+    deep = value.model_copy(deep=True)
+    assert shallow.items is value.items
+    assert deep.items == value.items and deep.items is not value.items
+    assert shallow.model_extra is not value.model_extra
+    assert deep.model_extra == value.model_extra
+    assert deep.model_fields_set == value.model_fields_set
+    updated = value.model_copy(update={"text": 123, "extra": [3]}, deep=True)
+    # Only identity is protected: payload values remain unchecked, like BaseModel.
+    assert vars(updated)["text"] == 123
+    assert updated.model_extra == {"extra": [3]}
+    assert updated.items == value.items and updated.items is not value.items
+    assert value.text == "x" and value.model_extra == {"extra": [2]}
+
+
+def test_copy_only_protects_bound_fields_of_open_views() -> None:
+    value = NativeRequest[Any](method="open")
+    assert value.model_copy(update={"method": "another"}).method == "another"
+    with pytest.raises(ValueError, match="kind.*bound discriminator"):
+        value.model_copy(update={"kind": "request"})
+
+
+def test_deferred_copy_protection_is_ready_before_schema_build() -> None:
+    class Deferred(NativeRequest[Literal["query"]], defer_build=True):
+        text: str
+
+    assert not Deferred.__pydantic_complete__
+    # Even bypassing validation does not bypass model_copy's identity check.
+    value = Deferred.model_construct(kind="request", method="query", text="x")
+    with pytest.raises(ValueError, match="method.*bound discriminator"):
+        value.model_copy(update={"method": "wrong"})
+    assert not Deferred.__pydantic_complete__
+    assert Deferred.model_rebuild(force=True)
+    with pytest.raises(ValueError, match="kind.*bound discriminator"):
+        value.model_copy(update={"kind": "wrong"})
+
+
+if sys.version_info >= (3, 13):
+
+    @pytest.mark.parametrize("model_type", [NativeQuery, IdentityQuery])
+    def test_copy_replace_uses_model_copy_protection(
+        model_type: type[NativeQuery] | type[IdentityQuery],
+    ) -> None:
+        value = model_type(text="original")
+        copied = copy.replace(value, text="changed")
+        assert type(copied) is model_type
+        assert copied is not value and copied.text == "changed"
+        assert copied.kind == "request" and copied.method == "query"
+        assert model_type.model_validate_json(copied.model_dump_json()) == copied
+        for name, tag in (("kind", "request"), ("method", "query")):
+            for replacement in (tag, "wrong"):
+                with pytest.raises(ValueError, match=rf"{name}.*bound discriminator"):
+                    copy.replace(value, **{name: replacement, "text": "rejected"})
+        assert value.text == "original"
+        assert value.kind == "request" and value.method == "query"

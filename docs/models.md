@@ -15,10 +15,11 @@ Choose the base at the family root, before declaring its concrete variants:
 `IdentityDiscriminatedModel` is a subclass of `DiscriminatedModel`. The longer name
 makes the extra identity-marking contract explicit. Both participate in the same
 family selection, unions, discovery and behavior assembly. This is a declaration
-choice, not a per-instance flag: the basic class has no marking validator, derived
-identity-name tuple or runtime policy branch. Only the identity subclass derives
-names and registers the public after-validator. Field definitions remain the
-single source of truth for both policies.
+choice, not a per-instance flag: the basic class has no marking validator or
+constructor policy branch. Both bases use the same derived bound-field names to
+protect `model_copy(update=...)`; only the identity subclass registers the public
+after-validator and also uses those names to mark fields as set. Field definitions
+remain the single source of truth for both policies.
 
 Ordinary JSON dumps retain tags for both bases. Choose the identity base when
 exports using `exclude_unset=True` must remain routable. Changing an existing
@@ -200,10 +201,11 @@ an explicit parameter under strict checking. Do not use `Request[str]` to mean
   field; the annotation still determines consumer types. The declaration factory
   is a marker, not an instance-time default generator. `model_fields` continues to
   expose that declaration; compiled validation and JSON Schema expose the derived
-  literal default. For `IdentityDiscriminatedModel`, schema generation also captures
-  the bound discriminator names
-  in an immutable class-level tuple derived from the fields. A base
-  `model_validator(mode="after")` updates the instance's public `model_fields_set`
+  literal default. Both bases derive bound discriminator names at class declaration
+  and refresh them during schema generation/rebuild, keeping one immutable tuple
+  derived from the fields. This protects copy updates, including deferred models.
+  On `IdentityDiscriminatedModel`, a public
+  `model_validator(mode="after")` also uses this tuple to update the instance's public `model_fields_set`
   before ordinary subclass after-validators. It performs no field scan,
   annotation resolution, or input copying. Pydantic may run after-validators again
   when nesting existing instances; the set update is idempotent.
@@ -272,7 +274,8 @@ when Pydantic generates the model's schema. The public schema hook replaces only
 marked defaults along the model's validator wrappers; payload schemas and native
 references are preserved. The identity subclass adds an after-validator that
 marks bound identity fields as set through the public `model_fields_set` property. The derived field-name tuple
-is refreshed during schema generation; it contains no tag values. There is no
+is initialized during declaration and refreshed during schema generation; it
+contains no tag values and is shared with the copy-update guard. There is no
 parallel tag registry, cached path, or annotation-result cache to synchronize.
 
 For nested fields, `bind_variants` captures the supplied leaves and returns
@@ -304,6 +307,45 @@ before-model validator sees the original input, before defaults are applied.
 Unchecked `model_construct()` does not execute the compiled schema and must supply
 tags explicitly; the declaration factory raises if called rather than returning
 an unresolved sentinel. It is not a persistence/deserialization API.
+
+## Identity and copying
+
+Validated construction accepts omitted tags or explicit values matching their
+Literal declarations. Wrong tag values raise a validation error. Attribute
+assignment to a discriminator is rejected by Pydantic's frozen field behavior,
+even if the assigned value is unchanged.
+
+Both bases also reject `model_copy(update=...)` when the update includes any
+**bound** discriminator, including a same-value update and `deep=True`. The check
+runs before copying and raises `ValueError` identifying the model and field.
+It checks update keys against the declaration-derived name tuple; it does not
+scan fields, resolve annotations or compare tag values on the copy path.
+
+On Python 3.13+, `copy.replace(instance, **changes)` delegates through Pydantic's
+`__replace__` to `model_copy(update=changes)`, so the same bound-tag protection
+applies. Payload-only replacements remain supported; no separate replacement hook
+is needed. Python 3.12 does not provide `copy.replace()`.
+
+Ordinary copies and payload changes remain available:
+
+```python
+copied_query = query.model_copy(update={"expression": "updated"}, deep=True)
+assert copied_query.expression == "updated"
+assert copied_query.kind == query.kind
+assert copied_query.method == query.method
+```
+
+Other updates preserve native Pydantic semantics: they are **not validated** and
+are not applied recursively. Open discriminator fields have no bound identity
+and retain native copy-update behavior. Nested payload replacement can likewise
+introduce unvalidated data; use normal validation when accepting external input.
+The guard adds no callbacks to constructors, `model_dump*`, `model_validate*` or
+`TypeAdapter` serialization/validation. Only explicit copy operations check updates.
+
+This is an API contract, not tamper-proof Python immutability. Direct internal
+mutation, explicitly invoking an ancestor implementation, and unchecked
+`model_construct()` are not validated data-entry APIs. The deprecated Pydantic
+`copy()` API is not extended; use `model_copy()`.
 
 ## JSON serialization contract
 
@@ -355,9 +397,10 @@ pydantic-core versions, verify these compatibility boundaries:
   run; mixin validators retain native MRO ordering. Nested validation can run
   this validator again on an existing instance;
   the set update must remain idempotent. No model-fields result tuple is inspected.
-- For the identity subclass, schema generation, including `model_rebuild()`,
-  refreshes the derived tuple of
-  bound field names from `model_fields`. Field definitions remain authoritative;
+- For both bases, declaration and schema generation, including `model_rebuild()`,
+  derive bound field names from `model_fields`. `model_copy(update=...)` rejects
+  bound tag keys even before a deferred schema is built; payload updates retain
+  native shallow/deep copy semantics. Field definitions remain authoritative;
   instances must not scan fields or resolve tags.
 - Identity models retain omitted and explicit tags in `exclude_unset=True`,
   including multilevel

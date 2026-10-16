@@ -93,6 +93,10 @@ Choose a base class when declaring a family:
 Both support the same automatic defaults, generics, multilevel dispatch, discovery
 and behavior assembly. The `Identity` prefix means bound tags are treated as set
 identity fields even when the caller omits them; it does not change their values.
+Both bases allow matching explicit tags during validation, reject discriminator
+assignment, and reject bound discriminator keys in `model_copy(update=...)`, even
+for unchanged values. Other copy updates retain native unvalidated semantics; see
+[identity and copying](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#identity-and-copying).
 Existing families that need the earlier unset-export guarantee should inherit
 `IdentityDiscriminatedModel`. Ordinary dumps retain tags with either base.
 `exclude_defaults=True` and explicit tag exclusions can remove tags with either
@@ -190,7 +194,9 @@ Literal aliases, against
 ordinary Pydantic models with matching frozen fields and `validate_default=True`.
 A second native control marks the same identity fields as set through a standard
 validator, exposing the cost of that guarantee separately from plain defaults.
-The benchmark also exercises nested JSON round trips with `exclude_unset=True`.
+Copy cases report the identity guard cost separately from native unchecked copies.
+JSON cases cover serialization, validation and nested round trips with
+`exclude_unset=True`.
 Benchmarks
 have no timing threshold and do not measure service throughput. Local passing
 checks do not imply that hosted CI has passed. Development tools and example

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from inspect import isabstract
 from typing import Annotated, Any, ClassVar, Self, TypeVar, cast
 
@@ -68,6 +68,13 @@ def _open_discriminator(model: type[DiscriminatedModel]) -> str | None:
     return next(
         (name for name, field in _tag_fields(model).items() if _is_open_tag(field.annotation)),
         None,
+    )
+
+
+def _bound_names(model: type[DiscriminatedModel]) -> tuple[str, ...]:
+    """Compile the identity field names from authoritative resolved fields."""
+    return tuple(
+        name for name, field in _tag_fields(model).items() if not _is_open_tag(field.annotation)
     )
 
 
@@ -140,6 +147,26 @@ class DiscriminatedModel(BaseModel):
     the family root to retain bound tags in exclude_unset exports instead.
     """
 
+    # Shared derived names for copy protection and optional identity marking.
+    _bound_tag_names: ClassVar[tuple[str, ...]] = ()
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+        """Copy using native semantics, rejecting updates to bound discriminator fields.
+
+        Even the same tag value is rejected. Other updates remain unvalidated,
+        as in BaseModel.model_copy; this is not a replacement for validation.
+        Only this copy operation checks updates; constructors and serializers
+        acquire no new callbacks or field scans.
+        """
+        if update:
+            for name in type(self)._bound_tag_names:
+                if name in update:
+                    raise ValueError(
+                        f"{_model_name(type(self))}.{name}: model_copy(update=...) cannot "
+                        "update a bound discriminator; omit it from update"
+                    )
+        return super().model_copy(update=update, deep=deep)
+
     @classmethod
     def __get_pydantic_core_schema__(
         cls, source: type[BaseModel], handler: GetCoreSchemaHandler
@@ -152,7 +179,9 @@ class DiscriminatedModel(BaseModel):
         runtime policy branch is registered by this base. The hook never mutates
         model_fields or an already compiled validator/serializer.
         """
-        return _with_tag_defaults(handler(source), cls)
+        schema = _with_tag_defaults(handler(source), cls)
+        cls._bound_tag_names = _bound_names(cls)
+        return schema
 
     @classmethod
     def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
@@ -165,6 +194,9 @@ class DiscriminatedModel(BaseModel):
         configuration has already been consumed.
         """
         super().__pydantic_init_subclass__(**kwargs)
+        # Also initialize deferred models, including explicit model_construct calls.
+        # Schema generation/rebuild refreshes this same derived tuple.
+        cls._bound_tag_names = _bound_names(cls)
         parents = [base for base in cls.__bases__ if issubclass(base, DiscriminatedModel)]
         if len(parents) != 1:
             raise TypeError(
@@ -282,25 +314,11 @@ class IdentityDiscriminatedModel(DiscriminatedModel):
     generation/rebuild; model_fields remains the authoritative declaration.
     """
 
-    # Derived from model_fields whenever this model's schema is generated.
-    _bound_tag_names: ClassVar[tuple[str, ...]] = ()
-
     @model_validator(mode="after")
     def _mark_bound_tags(self) -> Self:
         """Mark type identity using public APIs; repeated nested validation is idempotent."""
         self.model_fields_set.update(type(self)._bound_tag_names)
         return self
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls, source: type[BaseModel], handler: GetCoreSchemaHandler
-    ) -> CoreSchema:
-        """Compile native defaults and derive the names needed by the identity marker."""
-        schema = super().__get_pydantic_core_schema__(source, handler)
-        cls._bound_tag_names = tuple(
-            name for name, field in _tag_fields(cls).items() if not _is_open_tag(field.annotation)
-        )
-        return schema
 
 
 def _branches(
