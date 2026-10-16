@@ -2,7 +2,7 @@
 
 [Back to README](../README.md). See the [model example](../examples/README.md#models-and-manual-assembly)
 for a runnable introduction. The snippets below build on each other in order,
-except for the standalone recursive-family module.
+except for the standalone recursive-family modules.
 
 ## Choosing export semantics
 
@@ -459,9 +459,60 @@ an unresolved sentinel. It is not a persistence/deserialization API.
 ## Recursive family fields
 
 To accept sibling variants in a recursive field, bind the family rather than
-`Self`. The following is a standalone module. Put the future import at the top
+`Self`. Both declaration styles below use the same binding and rebuild sequence.
+Each example is a standalone module. Put the future import at the top
 so the binding name can be defined after both leaves exist; then rebuild the
-leaves before constructing instances or adapters:
+leaves before constructing instances or adapters.
+
+### Explicit generic declarations
+
+Bind `Node[Any]` for the children so each child can select its own tag independently
+of its parent's tag. Define the open-family alias after the generic class so
+specialization waits until the family's fields have been collected:
+
+```python
+from __future__ import annotations
+
+from typing import Annotated, Any, Literal
+
+from typebind import IdentityDiscriminatedModel, bind_variants, build_adapter, tag_field
+
+
+class Node[Kind: str](IdentityDiscriminatedModel):
+    kind: Kind = tag_field()
+    children: list[Annotated[NodeFamily, NODE_VARIANTS]] = []
+
+
+NodeFamily = Node[Any]
+
+
+class A(Node[Literal["a"]]):
+    value: int
+
+
+class B(Node[Literal["b"]]):
+    text: str
+
+
+NODE_VARIANTS = bind_variants([A, B])
+A.model_rebuild()
+B.model_rebuild()
+
+tree = A(value=1, children=[B(text="child")])
+adapter = build_adapter(Node[Any], variants=[A, B])
+restored = adapter.validate_json(adapter.dump_json(tree))
+assert isinstance(restored, A)
+assert isinstance(restored.children[0], B)
+assert restored == tree
+```
+
+Each child's static type remains `Node[Any]`. The parent's `Kind` does not constrain
+the child's tag; narrow the child before accessing a leaf-specific field.
+
+### Decorator declarations
+
+For decorated families, bind `Node` directly because this form has no explicit
+generic tag parameter:
 
 ```python
 from __future__ import annotations
