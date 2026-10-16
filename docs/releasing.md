@@ -237,6 +237,11 @@ version in its base series, such as `0.1.0.dev1` for base `0.1.0`. Dispatch:
 gh workflow run publish.yml --ref main -f target=testpypi -f version=0.1.0.dev1
 ```
 
+TestPyPI and PyPI have independent version namespaces. Uploading `0.1.0` to
+TestPyPI does not reserve or consume `0.1.0` on PyPI. Rehearsals may use stable
+or prerelease versions; using `0.1.0.dev1` for the first rehearsal is a choice,
+not an upload restriction. Choose an unused version on the target index.
+
 Do not create a production tag for this rehearsal. The guard requires the main
 branch, verifies that the checkout matches the workflow SHA and belongs to main,
 and checks the explicit version against the base in `pyproject.toml`. A missing
