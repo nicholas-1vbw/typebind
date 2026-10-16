@@ -77,13 +77,16 @@ cmd = "pytest --cov"
 
 [tool.poe.tasks.example]
 help = "Run model, manual assembly and installed-plugin discovery examples"
-sequence = ["example-models", "example-manual", "example-discovery"]
+sequence = ["example-models", "example-manual", "example-discovery", "example-decorators"]
 
 [tool.poe.tasks.example-models]
 cmd = "python examples/models.py"
 
 [tool.poe.tasks.example-manual]
 cmd = "python examples/manual.py"
+
+[tool.poe.tasks.example-decorators]
+cmd = "python examples/decorators.py"
 
 [tool.poe.tasks.example-discovery]
 cmd = "python examples/discovery.py"

@@ -153,13 +153,60 @@ runtime dependencies and are not shipped inside its wheel.
 Import public APIs from `typebind`. The `_models`, `_behavior`, and `_discovery`
 modules are internal implementation details.
 
+## Decorator declarations
+
+When application code does not need statically typed tag attributes, `@model`
+removes the discriminator field and type-parameter boilerplate:
+
+```python
+from typebind import IdentityDiscriminatedModel, model
+
+
+@model(tag="kind")
+class Message(IdentityDiscriminatedModel):
+    identifier: str
+
+
+@model(tag="method", variant="request")
+class Request(Message):
+    sequence: int = 0
+
+
+@model(variant="query")
+class Query(Request):
+    text: str
+
+
+query = Query(identifier="q", text="hello")
+assert query.model_dump(exclude_unset=True) == {
+    "identifier": "q",
+    "kind": "request",
+    "method": "query",
+    "text": "hello",
+}
+```
+
+Here `variant="request"` binds the parent's `kind`; `tag="method"` introduces this
+family's discriminator. Business fields and inheritance remain checked by strict
+Pyright. Generated tag attributes are runtime-only; use the explicit generic form
+when you need `Literal` inference or static narrowing by tags. Both forms use the
+same fields, defaults, discovery and adapters. No stubs or public class factory
+are required.
+
+Run `uv run --locked poe example-decorators` for the
+[complete example](https://github.com/nicholas-1vbw/typebind/blob/main/examples/decorators.py),
+including two variants, manual behavior assembly and nested JSON round trips.
+See [declaration details](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#decorator-declarations)
+for composition and recursive fields.
+
 ## Guides and contracts
 
 - [Models](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md): multilevel discriminators, aliases, nested unions, duplicate tags and validation boundaries.
 - [Behaviors](https://github.com/nicholas-1vbw/typebind/blob/main/docs/behaviors.md): interface/family binding, manual assembly, coverage, conflicts and exact-type dispatch.
 - [Discovery](https://github.com/nicholas-1vbw/typebind/blob/main/docs/discovery.md): package layout, entry points, group/family relationships, scopes and local extras.
 
-Each family introduces one discriminator type parameter. Discriminator aliases,
+Explicit generic families introduce one discriminator type parameter.
+Decorator families instead generate runtime-only tag fields; payload typing stays strict. Discriminator aliases,
 additional payload type parameters, and multiple model-family parents are not
 supported. Strict Pyright is verified; PyCharm and Mypy are not. Pydantic's
 supported minor series is intentionally bounded because declaration validation
@@ -172,7 +219,7 @@ uv run --locked poe check
 uv run --locked poe benchmark
 ```
 
-`check` runs Ruff, strict Pyright, pytest, all three examples, a wheel/sdist build,
+`check` runs Ruff, strict Pyright, pytest, all runnable examples, a wheel/sdist build,
 and artifact verification. Tests execute the README quick start and guide snippets.
 The installed-plugin test builds the real example packages and checks discovery,
 nested round trips and strict typing against installed wheels. The native build
@@ -194,9 +241,10 @@ Literal aliases, against
 ordinary Pydantic models with matching frozen fields and `validate_default=True`.
 A second native control marks the same identity fields as set through a standard
 validator, exposing the cost of that guarantee separately from plain defaults.
-Copy cases report the identity guard cost separately from native unchecked copies.
-JSON cases cover serialization, validation and nested round trips with
-`exclude_unset=True`.
+Decorator cases measure the same one- and two-tag construction paths against
+these native controls. Copy cases report the identity guard cost separately from
+native unchecked copies. JSON cases cover serialization, validation and nested
+round trips with `exclude_unset=True`.
 Benchmarks
 have no timing threshold and do not measure service throughput. Local passing
 checks do not imply that hosted CI has passed. Development tools and example

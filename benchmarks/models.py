@@ -16,6 +16,7 @@ from typebind import (
     IdentityDiscriminatedModel,
     bind_variants,
     build_adapter,
+    model,
     tag_field,
 )
 
@@ -71,6 +72,46 @@ class IdentityAliasEvent(IdentityMessage[EventTag]):
 
 
 class IdentityAliasQuery(IdentityRequest[QueryTag]):
+    pass
+
+
+@model(tag="kind")
+class DecoratedMessage(DiscriminatedModel):
+    value: int
+
+
+@model(variant="event")
+class DecoratedEvent(DecoratedMessage):
+    pass
+
+
+@model(tag="method", variant="request")
+class DecoratedRequest(DecoratedMessage):
+    pass
+
+
+@model(variant="query")
+class DecoratedQuery(DecoratedRequest):
+    pass
+
+
+@model(tag="kind")
+class DecoratedIdentityMessage(IdentityDiscriminatedModel):
+    value: int
+
+
+@model(variant="event")
+class DecoratedIdentityEvent(DecoratedIdentityMessage):
+    pass
+
+
+@model(tag="method", variant="request")
+class DecoratedIdentityRequest(DecoratedIdentityMessage):
+    pass
+
+
+@model(variant="query")
+class DecoratedIdentityQuery(DecoratedIdentityRequest):
     pass
 
 
@@ -145,16 +186,22 @@ assert "kind" not in query.model_dump(exclude_unset=True)
 assert envelope_adapter.validate_json(envelope_adapter.dump_json(envelope)) == envelope
 
 native_query = NativeQuery(value=1)
+decorated_query = DecoratedQuery(value=1)
 envelope_wire = envelope_adapter.dump_json(envelope)
 
 cases: dict[str, Callable[[], object]] = {
     "copy_plain": lambda: query.model_copy(),
     "copy_payload": lambda: query.model_copy(update={"value": 2}),
+    "decorated_copy_payload": lambda: decorated_query.model_copy(update={"value": 2}),
     "native_unchecked_copy_plain": lambda: native_query.model_copy(),
     "native_unchecked_copy_payload": lambda: native_query.model_copy(update={"value": 2}),
     "family_dump_json": lambda: family_adapter.dump_json(query),
     "nested_dump_json": lambda: envelope_adapter.dump_json(envelope),
     "nested_validate_json": lambda: envelope_adapter.validate_json(envelope_wire),
+    "decorated_single_omit": lambda: DecoratedEvent(value=1),
+    "decorated_multi_omit": lambda: DecoratedQuery(value=1),
+    "decorated_identity_single_omit": lambda: DecoratedIdentityEvent(value=1),
+    "decorated_identity_multi_omit": lambda: DecoratedIdentityQuery(value=1),
     "single_omit": lambda: Event(value=1),
     "single_explicit": lambda: Event(kind="event", value=1),
     "multi_omit": lambda: Query(value=1),
@@ -203,6 +250,8 @@ cases: dict[str, Callable[[], object]] = {
 }
 for custom, native in (
     (Event, NativeEvent),
+    (DecoratedEvent, NativeEvent),
+    (DecoratedQuery, NativeQuery),
     (Query, NativeQuery),
     (AliasEvent, NativeAliasEvent),
     (AliasQuery, NativeAliasQuery),
@@ -211,6 +260,8 @@ for custom, native in (
 
 for custom, marked in (
     (IdentityEvent, MarkedEvent),
+    (DecoratedIdentityEvent, MarkedEvent),
+    (DecoratedIdentityQuery, MarkedQuery),
     (IdentityQuery, MarkedQuery),
     (IdentityAliasEvent, MarkedAliasEvent),
     (IdentityAliasQuery, MarkedAliasQuery),
@@ -244,6 +295,14 @@ print(
                 "excludes assembly, I/O and concurrency."
             ),
             "results": results,
+            "decorated_to_native_omitted_ratio": {
+                name: medians[f"decorated_{name}_omit"] / medians[f"native_{name}_omit"]
+                for name in ("single", "multi")
+            },
+            "decorated_identity_to_marked_omitted_ratio": {
+                name: medians[f"decorated_identity_{name}_omit"] / medians[f"marked_{name}_omit"]
+                for name in ("single", "multi")
+            },
             "typebind_to_native_omitted_ratio": {
                 name: medians[f"{name}_omit"] / medians[f"native_{name}_omit"]
                 for name in ("single", "multi", "alias_single", "alias_multi")
