@@ -154,10 +154,22 @@ repository, filename and environment match exactly, then inspect the job error.
 The action produces index-hosted attestations by default. Third-party actions
 are pinned to commit SHAs; review their updates as dependency changes.
 
+## Environment policy
+
+CI and publishing use Ubuntu 24.04; workflow files own the runner labels. The
+Python compatibility matrix follows patch releases within 3.12–3.15, while local
+checks and publishing use `.python-version`. uv and the build-backend constraint
+are fixed in `pyproject.toml`, dependency versions in `uv.lock`, and third-party
+Actions by commit SHA. A versioned OS label prevents an automatic OS-major move;
+GitHub still updates its image and runner-provided tools.
+
 ## Prepare and check a candidate
 
 1. Change `project.version` in `pyproject.toml`, run `uv lock`, and review the
    release notes and public package contents. Keep version changes in a PR.
+   Use canonical versions such as `0.1.0.dev1` or `0.1.0a1`. The local plugin
+   examples consume this checkout, not independently selected typebind releases.
+   Their own fixture versions do not need to change with the library version.
 2. Run `uv run --locked poe check` locally and require the full hosted CI matrix
    on the final commit. Merge the reviewed changes to `main`.
 3. To rehearse without uploading, run the following after this workflow has
