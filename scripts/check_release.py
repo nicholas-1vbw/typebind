@@ -70,8 +70,7 @@ def main() -> None:
         subprocess.run(["git", "merge-base", "--is-ancestor", commit, "origin/main"], check=True)
     if candidate != base:
         # uv updates project and local lock metadata without syncing the environment.
-        # Locked dependencies were installed first; offline prevents new index resolution.
-        subprocess.run(["uv", "version", candidate, "--no-sync", "--offline"], check=True)
+        subprocess.run(["uv", "version", candidate, "--no-sync"], check=True)
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a") as stream:
             stream.write(

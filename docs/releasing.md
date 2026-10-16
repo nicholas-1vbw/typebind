@@ -195,10 +195,12 @@ are rejected. Upload candidates must still identify the checked-out commit and
 belong to main.
 
 After syncing the committed lockfile, release preparation uses native
-`uv version <full-version> --no-sync --offline` to update `pyproject.toml` and
-local package metadata in `uv.lock` in the CI working copy only. Dependencies
-remain locked; no version change is committed or pushed back to Git. The sdist
-contains the prepared full version, so rebuilding it does not require the tag
+`uv version <full-version> --no-sync` to update `pyproject.toml` and
+local package metadata in `uv.lock` in the CI working copy only. Version
+preparation may access the package index to refresh lock metadata; it does not
+request dependency upgrades or sync the environment. No version change is
+committed or pushed back to Git. The sdist contains the prepared full version,
+so rebuilding it does not require the tag
 or another suffix input. Both distributions must match the selected full version
 before upload. The local plugin examples continue to consume this checkout;
 their own fixture versions do not change.
