@@ -2,9 +2,9 @@
 
 [![PyPI](https://img.shields.io/pypi/v/typebind)](https://pypi.org/project/typebind/)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange)](https://github.com/nicholas-1vbw/typebind/releases)
-[![Python](https://img.shields.io/pypi/requires-python/typebind)](https://pypi.org/project/typebind/)
+[![Python](https://img.shields.io/pypi/pyversions/typebind)](https://pypi.org/project/typebind/)
 [![CI](https://github.com/nicholas-1vbw/typebind/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nicholas-1vbw/typebind/actions/workflows/ci.yml?query=branch%3Amain)
-[![License: MIT](https://img.shields.io/github/license/nicholas-1vbw/typebind)](https://github.com/nicholas-1vbw/typebind/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/nicholas-1vbw/typebind/blob/main/LICENSE)
 
 Build extensible Pydantic model families with automatic discriminator tags and
 statically typed fields. Bind behavior implementations to models without mixing
