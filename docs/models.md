@@ -1,7 +1,8 @@
 # Model families and serialization
 
 [Back to README](../README.md). See the [model example](../examples/README.md#models-and-manual-assembly)
-for a runnable introduction. The snippets below build on each other in order.
+for a runnable introduction. The snippets below build on each other in order,
+except for the standalone recursive-family modules.
 
 ## Choosing export semantics
 
@@ -17,8 +18,8 @@ makes the extra identity-marking contract explicit. Both participate in the same
 family selection, unions, discovery and behavior assembly. This is a declaration
 choice, not a per-instance flag: the basic class has no marking validator or
 constructor policy branch. Both bases use the same derived bound-field names to
-protect `model_copy(update=...)`; only the identity subclass registers the public
-after-validator and also uses those names to mark fields as set. Field definitions
+protect `model_copy(update=...)`; only the identity subclass registers an
+after-validator through Pydantic's public API and also uses those names to mark fields as set. Field definitions
 remain the single source of truth for both policies.
 
 Ordinary JSON dumps retain tags for both bases. Choose the identity base when
@@ -167,7 +168,10 @@ module import. Classes declared inside functions incur that cost whenever the
 function executes the declaration. This is separate from instance construction,
 serialization and behavior dispatch; no fixed percentage overhead is promised.
 
-For recursive payload fields, use `Self`, for example `children: list[Self]`.
+For recursion within the same concrete type, use `Self`, for example
+`children: list[Self]`. If `A` and `B` are sibling variants, an `A` with that
+annotation cannot accept a `B` child. For mixed-variant children, bind the family
+as shown in [recursive family fields](#recursive-family-fields).
 A class-name self-reference resolved during the original class body points to
 that original class, not its decorated replacement; nested values then validate
 as the undecorated class. This is not a supported recursive declaration form for
@@ -323,22 +327,32 @@ an explicit parameter under strict checking. Do not use `Request[str]` to mean
   frozen `Field` with a private default factory. Its factory identity identifies
   tag fields after Pydantic merges and specializes fields; no separate registry
   or custom metadata type is needed. The assigned default tells Pyright that
-  constructors can omit the tag. During schema generation, typebind reads the
+  constructors can omit the tag, including on an open family: strict Pyright
+  accepts `Message[Any](identifier="m")`, but runtime validation rejects its
+  missing `kind`. During schema generation, typebind reads the
   specialized field annotation and replaces that factory's schema with a native
   default and `validate_default=True`. Open tags become required fields. Explicit
   values and automatic defaults both pass through the field's validators.
 - `tag_field()` returns `Any`, like Pydantic's `Field`, for assignment to a generic
   field; the annotation still determines consumer types. The declaration factory
   is a marker, not an instance-time default generator. `model_fields` continues to
-  expose that declaration; compiled validation and JSON Schema expose the derived
-  literal default. Both bases derive bound discriminator names at class declaration
+  expose that declaration; it is not authoritative for tag requiredness or runtime
+  defaults. For an open tag, `FieldInfo.is_required()` returns `False` even though
+  validation requires input. For a bound tag, `FieldInfo.default` remains
+  `PydanticUndefined`; `get_default()` does not supply the compiled literal, and
+  `get_default(call_default_factory=True)` raises instead of returning the tag.
+  Use `model_json_schema()` to inspect compiled tag requiredness/defaults, and
+  normal model validation to apply them. Both bases derive bound discriminator names at class declaration
   and refresh them during schema generation/rebuild, keeping one immutable tuple
   derived from the fields. This protects copy updates, including deferred models.
-  On `IdentityDiscriminatedModel`, a public
-  `model_validator(mode="after")` also uses this tuple to update the instance's public `model_fields_set`
+  On `IdentityDiscriminatedModel`, an after-validator registered through the public
+  `model_validator(mode="after")` API also uses this tuple to update the instance's public `model_fields_set`
   before ordinary subclass after-validators. It performs no field scan,
   annotation resolution, or input copying. Pydantic may run after-validators again
   when nesting existing instances; the set update is idempotent.
+  Its method name, `_mark_bound_tags`, is internal. Defining a subclass validator
+  with the same name overrides it under Pydantic's native rules and can remove
+  identity marking; use a distinct name for application validators.
 - For the identity base, validator composition follows Pydantic's native MRO order.
   An after-validator
   inherited from another mixin can run before the base marking validator (for
@@ -414,6 +428,10 @@ same nested union at the explicitly annotated field. Containers then use normal
 constructors, `model_validate`, `model_dump_json`, and `TypeAdapter`. Existing
 unbound containers are not rewritten; a plain `Message[Any]` annotation keeps
 its native Pydantic meaning and does not dispatch to concrete leaves.
+It also serializes according to the declared family schema: a `Query` stored in
+a bare `Message[Any]` field can lose `method`, `sequence`, and `expression` on
+export. Use an explicit union or `bind_variants` when those subtype fields must
+survive a round trip.
 
 Lists, dictionaries, optional fields, and independent family bindings are tested.
 Known recursive trees can declare recursive native discriminated unions directly.
@@ -437,6 +455,102 @@ before-model validator sees the original input, before defaults are applied.
 Unchecked `model_construct()` does not execute the compiled schema and must supply
 tags explicitly; the declaration factory raises if called rather than returning
 an unresolved sentinel. It is not a persistence/deserialization API.
+
+## Recursive family fields
+
+To accept sibling variants in a recursive field, bind the family rather than
+`Self`. Both declaration styles below use the same binding and rebuild sequence.
+Each example is a standalone module. Put the future import at the top
+so the binding name can be defined after both leaves exist; then rebuild the
+leaves before constructing instances or adapters.
+
+### Explicit generic declarations
+
+Bind `Node[Any]` for the children so each child can select its own tag independently
+of its parent's tag. Define the open-family alias after the generic class so
+specialization waits until the family's fields have been collected:
+
+```python
+from __future__ import annotations
+
+from typing import Annotated, Any, Literal
+
+from typebind import IdentityDiscriminatedModel, bind_variants, build_adapter, tag_field
+
+
+class Node[Kind: str](IdentityDiscriminatedModel):
+    kind: Kind = tag_field()
+    children: list[Annotated[NodeFamily, NODE_VARIANTS]] = []
+
+
+NodeFamily = Node[Any]
+
+
+class A(Node[Literal["a"]]):
+    value: int
+
+
+class B(Node[Literal["b"]]):
+    text: str
+
+
+NODE_VARIANTS = bind_variants([A, B])
+A.model_rebuild()
+B.model_rebuild()
+
+tree = A(value=1, children=[B(text="child")])
+adapter = build_adapter(Node[Any], variants=[A, B])
+restored = adapter.validate_json(adapter.dump_json(tree))
+assert isinstance(restored, A)
+assert isinstance(restored.children[0], B)
+assert restored == tree
+```
+
+Each child's static type remains `Node[Any]`. The parent's `Kind` does not constrain
+the child's tag; narrow the child before accessing a leaf-specific field.
+
+### Decorator declarations
+
+For decorated families, bind `Node` directly because this form has no explicit
+generic tag parameter:
+
+```python
+from __future__ import annotations
+
+from typing import Annotated
+
+from typebind import IdentityDiscriminatedModel, bind_variants, build_adapter, model
+
+
+@model(tag="kind")
+class Node(IdentityDiscriminatedModel):
+    children: list[Annotated[Node, NODE_VARIANTS]] = []
+
+
+@model(variant="a")
+class A(Node):
+    value: int
+
+
+@model(variant="b")
+class B(Node):
+    text: str
+
+
+NODE_VARIANTS = bind_variants([A, B])
+A.model_rebuild()
+B.model_rebuild()
+
+tree = A(value=1, children=[B(text="child")])
+adapter = build_adapter(Node, variants=[A, B])
+restored = adapter.validate_json(adapter.dump_json(tree))
+assert isinstance(restored, A)
+assert isinstance(restored.children[0], B)
+assert restored == tree
+```
+
+The compiled children field dispatches through the explicit `[A, B]` snapshot.
+Each child's static type remains `Node`; narrow it before accessing a leaf-specific field.
 
 ## Identity and copying
 
@@ -488,7 +602,9 @@ Ordinary model and adapter dumps retain all routing tags. Keep those tags and
 required payload fields in serialized records. For `IdentityDiscriminatedModel`,
 `exclude_unset=True` retains all bound tags while omitting unrelated unset defaults, including in nested family
 fields. For `DiscriminatedModel`, omitted default tags are excluded, so use an
-ordinary dump for family interchange. `exclude_defaults=True` and explicit field
+ordinary dump for family interchange. A known concrete leaf can restore its own
+omitted tag defaults, but a family union needs those tags to choose the leaf
+first. `exclude_defaults=True` and explicit field
 exclusions can still remove tags, even when combined with `exclude_unset=True`; such outputs cannot be relied
 on for family round trips. Native union validation
 rejects missing tags with `union_tag_not_found` before selecting a concrete model.

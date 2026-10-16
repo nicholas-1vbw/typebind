@@ -51,6 +51,12 @@ when those interfaces bind to different ancestor families. Native generic
 forwarding through intermediate implementation bases is supported; there must
 ultimately be one concrete model target. Models do not inherit these interfaces.
 
+Assembly resolves the `model` property's return annotation with `get_type_hints`.
+With `from __future__ import annotations`, a family defined only inside a function
+may be unavailable to that lookup, causing `NameError` even if it was in scope
+when the Protocol was declared. Define the family and interface at module scope
+so the annotation's names remain available during assembly.
+
 Both `variants` and `implementations` are ordinary tuples. No discovery or
 publication metadata is needed. Use [entry point discovery](discovery.md) when
 other packages should supply these tuples.
@@ -98,7 +104,7 @@ implementation declarations. No `cast` is needed by consumers.
 
 ### Performance verification
 
-The `uv run --locked poe benchmark` task runs a standard-library microbenchmark
+After `uv sync --locked`, the `uv run --no-sync poe benchmark` task runs a standard-library microbenchmark
 of direct functions, prebound adapter methods, known adapter construction,
 assembled adaptation, and a reflection-on-every-call comparison. It reports raw
 samples and minimum/median microseconds, with GC enabled. It excludes discovery,

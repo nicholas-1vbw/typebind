@@ -44,7 +44,7 @@ def tag_field() -> Any:
     and generic substitution. Schema generation replaces it with a validated
     native default for bound tags, or a required field for open tags.
     DiscriminatedModel keeps native unset semantics; IdentityDiscriminatedModel
-    additionally marks bound tags as set through a public after-validator.
+    additionally marks bound tags as set through Pydantic's public validator API.
 
     Like Pydantic's Field, this helper returns Any for assignment to a typed
     field. The explicit annotation owns the field and constructor argument types;
@@ -346,8 +346,8 @@ class IdentityDiscriminatedModel(DiscriminatedModel):
     """Treat bound discriminator tags as set identity fields, even when omitted.
 
     Choose this base when exclude_unset exports must retain routing tags. It adds
-    one public after-validator; ordinary defaults and other exclusion options
-    keep native semantics. Validator ordering follows Pydantic's native MRO.
+    one after-validator using Pydantic's public API; ordinary defaults and other
+    exclusion options keep native semantics. Validator ordering follows Pydantic's native MRO.
     The derived name tuple contains no tag values and is refreshed on schema
     generation/rebuild; model_fields remains the authoritative declaration.
     """
