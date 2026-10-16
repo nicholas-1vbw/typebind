@@ -11,6 +11,10 @@ on:
         options: [check, testpypi]
         default: check
         required: true
+      version:
+        description: Full version (required for TestPyPI; optional for check), e.g. 0.1.0.dev1
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -29,6 +33,7 @@ jobs:
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       prerelease: ${{ steps.release.outputs.prerelease }}
+      devrelease: ${{ steps.release.outputs.devrelease }}
       version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,14 +48,18 @@ jobs:
         run: uv python install
       - name: Sync locked dependencies
         run: uv sync --locked
-      - name: Verify upload candidate, version and main ancestry
+      - name: Validate candidate and prepare the build checkout version
         id: release
-        if: github.event_name == 'push' || inputs.target == 'testpypi'
+        env:
+          RELEASE_TARGET: ${{ inputs.target }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: uv run --no-sync python scripts/check_release.py
       - name: Build wheel and sdist
         run: uv run --no-sync poe build --out-dir dist/release
       - name: Verify release artifacts and isolated installation
-        run: uv run --no-sync poe check-dist --dist-dir dist/release
+        run: uv run --no-sync poe check-dist --dist-dir dist/release --expected-version "$RELEASE_VERSION"
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
       - name: Store only the verified distributions
         id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -112,7 +121,9 @@ jobs:
       - name: Install the hash-checked index wheel and run isolated examples
         run: >-
           uv run --no-sync poe check-dist --dist-dir dist/release
-          --index-url https://test.pypi.org/simple/
+          --index-url https://test.pypi.org/simple/ --expected-version "$RELEASE_VERSION"
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
 
   pypi:
     name: Upload verified artifacts to PyPI
@@ -158,11 +169,14 @@ jobs:
       - name: Install the hash-checked index wheel and run isolated examples
         run: >-
           uv run --no-sync poe check-dist --dist-dir dist/release
-          --index-url https://pypi.org/simple/
+          --index-url https://pypi.org/simple/ --expected-version "$RELEASE_VERSION"
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
 
   github-release:
     name: Create GitHub Release after PyPI verification
     needs: [build, verify-pypi]
+    if: needs.build.outputs.devrelease == 'false'
     runs-on: ubuntu-24.04
     permissions:
       contents: write # Only this job may create the release and attach distributions.
