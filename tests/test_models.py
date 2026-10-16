@@ -320,6 +320,25 @@ def test_variant_bindings_are_explicit_independent_snapshots() -> None:
     assert type(adapter.validate_python(data).primary) is Write
 
 
+def test_optional_family_binding_reports_the_correct_annotation() -> None:
+    binding = bind_variants([Query])
+    with pytest.raises(TypeError, match="open DiscriminatedModel family") as error:
+        TypeAdapter(Annotated[Message[Any] | None, binding])
+    assert repr(Message[Any] | None) in str(error.value)
+    assert "Annotated[Family[Any], binding] | None" in str(error.value)
+
+    class OptionalDocument(BaseModel):
+        primary: Annotated[Message[Any], binding] | None
+
+    adapter = TypeAdapter(OptionalDocument)
+    query = Query(identifier="q", sequence=1, expression="hello")
+    restored = adapter.validate_json(adapter.dump_json(OptionalDocument(primary=query)))
+    assert type(restored.primary) is Query
+    assert restored.primary == query
+    empty = OptionalDocument(primary=None)
+    assert adapter.validate_json(adapter.dump_json(empty)).primary is None
+
+
 def test_recursive_family_fields() -> None:
     class Node[Kind: str](IdentityDiscriminatedModel):
         kind: Kind = tag_field()

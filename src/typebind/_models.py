@@ -516,7 +516,11 @@ def _union_for(
         or not issubclass(family, DiscriminatedModel)
         or _open_discriminator(family) is None
     ):
-        raise TypeError(f"Expected an open DiscriminatedModel family; got {family!r}")
+        raise TypeError(
+            f"Expected an open DiscriminatedModel family; got {family!r}. "
+            "Apply the binding to the family itself: "
+            "use Annotated[Family[Any], binding] | None for an optional field."
+        )
     origin = family_base(family)
     discriminator = _open_discriminator(origin)
     assert discriminator is not None
