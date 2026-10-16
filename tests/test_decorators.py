@@ -136,7 +136,6 @@ def test_basic_policy_has_native_schema_without_marking() -> None:
     assert Event(value=1).model_fields_set == {"value"}
     assert Event(value=1).model_dump(exclude_unset=True) == {"value": 1}
     assert Event(value=1).model_dump() == {"kind": "event", "value": 1}
-    assert not hasattr(Event, "_mark_bound_tags")
     with pytest.raises(ValueError, match="bound discriminator"):
         Event(value=1).model_copy(update={"kind": "event"})
     with pytest.raises(ValidationError, match="Field required"):

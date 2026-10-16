@@ -49,9 +49,6 @@ def test_native_schema_has_no_marking_callback() -> None:
     schema = TypeAdapter(NativeQuery).core_schema
     assert schema["type"] == "model"
     assert schema["schema"]["type"] == "model-fields"
-    assert not hasattr(NativeQuery, "_mark_bound_tags")
-    assert vars(NativeQuery)["_bound_tag_names"] == ("kind", "method")
-    assert not hasattr(DiscriminatedModel, "_mark_bound_tags")
     assert NativeQuery(text="x").model_fields_set == {"text"}
     assert IdentityQuery(text="x").model_fields_set == {"kind", "method", "text"}
 

@@ -224,7 +224,9 @@ and artifact verification. Tests execute the README quick start and guide snippe
 The installed-plugin test builds the real example packages and checks discovery,
 nested round trips and strict typing against installed wheels. The native build
 creates a wheel from the sdist; artifact checks verify metadata, MIT, `py.typed`,
-source contents, clean-environment execution and strict typing outside the checkout.
+source contents, dependency installation from wheel metadata, and strict typing
+outside the checkout. The lockfile constrains dependency versions; it does not
+preinstall packages that a wheel failed to declare.
 
 [CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps for Python 3.12–3.15 on Linux, macOS and Windows.
 Each job passes its Python version to `setup-uv`, which sets `UV_PYTHON` and

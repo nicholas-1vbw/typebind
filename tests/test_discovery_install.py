@@ -40,7 +40,7 @@ def test_installed_plugins_are_discovered_across_distributions(tmp_path: Path) -
     package_wheel = next(wheels.glob("typebind-*.whl"))
     run(uv, "venv", str(environment), "--python", sys.executable)
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    requirements = tmp_path / "runtime.txt"
+    constraints = tmp_path / "runtime-constraints.txt"
     run(
         uv,
         "export",
@@ -49,10 +49,10 @@ def test_installed_plugins_are_discovered_across_distributions(tmp_path: Path) -
         "--no-emit-project",
         "--no-hashes",
         "--output-file",
-        str(requirements),
+        str(constraints),
         cwd=root,
     )
-    run(uv, "pip", "install", "--python", str(python), "-r", str(requirements), str(package_wheel))
+    run(uv, "pip", "install", "--python", str(python), "--constraint", str(constraints), str(package_wheel))
     run(
         uv,
         "pip",
