@@ -311,7 +311,7 @@ def test_abstract_tagged_variants_are_rejected(binding: bool) -> None:
 
     annotation = Annotated[Message[Any], bind_variants([ConcreteQuery])]
     adapter = (
-        TypeAdapter(annotation)
+        TypeAdapter[Message[Any]](annotation)
         if binding
         else build_adapter(Message[Any], variants=[ConcreteQuery])
     )
@@ -597,8 +597,22 @@ def test_conditional_tag_exclusion_is_rejected_at_declaration() -> None:
         ),
     ],
 )
-def test_specialization_rejects_unsupported_tag_settings(setting: str, value: Any) -> None:
+def test_specialization_preserves_tag_field_restrictions(setting: str, value: Any) -> None:
     options = {setting: value}
+
+    class Native[Tag: str](BaseModel):
+        kind: Tag
+
+    native = Native[Annotated[Literal["hidden"], Field(**options)]]
+    if getattr(native.model_fields["kind"], setting) is None:
+        # Older Pydantic releases ignore these settings in generic type arguments.
+        # They remain safe only if tags are still exported and routable.
+        leaf = Message[Annotated[Literal["hidden"], Field(**options)]]
+        sample = leaf(identifier="q")
+        adapter = build_adapter(Message[Any], variants=[leaf])
+        assert sample.model_dump(by_alias=True) == {"kind": "hidden", "identifier": "q"}
+        assert adapter.validate_json(adapter.dump_json(sample, by_alias=True)) == sample
+        return
     with pytest.raises(TypeError, match=f"Unsupported settings: .*{setting}"):
         Message[Annotated[Literal["hidden"], Field(**options)]]
 
