@@ -262,8 +262,10 @@ notes and the same wheel/sdist as assets. Trusted Publishing uses no stored API
 tokens; the Release job uses GitHub's built-in token with job-scoped write access.
 
 Manual dispatch defaults to `check` (no upload) and also offers `testpypi` as an
-independent optional rehearsal. Production does not require TestPyPI. Uploads
-require a version tag on main and the selected publishing environment. Ordinary
+independent optional rehearsal from `main`, without creating a version tag.
+Production tags, including development and alpha/beta/rc versions, publish to
+PyPI; TestPyPI is not a daily development-release channel or a production prerequisite.
+Both upload paths require their configured environment approval. Ordinary
 PR/branch CI never publishes. Configure tag rules and the approval gate before
 pushing a release tag; YAML alone does not enable these protections.
 

@@ -16,7 +16,7 @@ by GitHub environment settings, not by the presence of `environment` in YAML.
 | Trigger | Path after shared CI, build and artifact validation |
 | --- | --- |
 | Manual `check` (default) | Stop; no upload or publishing environment |
-| Manual `testpypi` | TestPyPI upload and installed-wheel verification |
+| Manual `testpypi` on `main` | TestPyPI approval, upload and installed-wheel verification; no version tag |
 | Push a protected `v*` tag | Production approval, PyPI upload, installed-wheel verification, GitHub Release |
 
 There is no manual production target. Merging a PR, pushing a branch, or creating
@@ -27,9 +27,15 @@ production approval have separate controls described below.
 TestPyPI is an independent, optional rehearsal. Production does not depend on
 its availability, publisher configuration or previous results. Each run builds
 its own candidate; files are not promoted between separate workflow runs.
-Production and TestPyPI have separate concurrency groups, so a pending production
-approval does not block a manual rehearsal. Do not queue multiple production
-versions at once: GitHub concurrency is not a durable FIFO release queue.
+Upload concurrency is scoped to the index and project version. Different versions
+and indices do not share an upload lock. Runs for the same index/version do not
+upload concurrently; GitHub may replace an older pending job when another is
+queued. This is not a durable release queue or a substitute for checking an
+index before retrying.
+
+Development (`.devN`), alpha, beta, rc and stable version tags all publish to
+PyPI. TestPyPI validates changes to the publishing process; it is not a daily
+development-release channel and is not required again after a successful rehearsal.
 
 ## Public contributions and release authority
 
@@ -53,7 +59,7 @@ an artifact supplied by a PR or another workflow run.
 A fork's workflow has the fork's identity, not the upstream publisher identity.
 Nevertheless, review third-party changes to workflows, release scripts, build
 configuration and dependencies carefully before merging. Someone who can change
-the trusted workflow can remove its Python guards. Tag/version checks and tests
+the trusted workflow can remove its Python guards. Tag/version checks
 catch mistakes; they do not replace GitHub rules and environment approval.
 Trusted Publishing authenticates the workflow, not the safety of package code.
 
@@ -69,10 +75,11 @@ publishers and environments are not prerequisites for production publishing.
    project name is available on the selected index. Neither a repository nor a
    pending publisher reserves a package name.
 2. In GitHub **Settings → Environments**, create `pypi` for production and
-   optionally `testpypi` for rehearsals. Allow
-   deployments only from **tags** matching `v*`, not branches. Require approval
-   for `pypi`; if another maintainer can approve, enable prevention of self-review.
-   Restrict bypass permissions as appropriate for the maintainer team.
+   optionally `testpypi` for rehearsals. For `pypi`, allow only **tags** matching
+   `v*`, not branches. For `testpypi`, allow only the **branch** `main`, not tags.
+   Require reviewer approval for both environments and disable administrator
+   bypass. A sole maintainer can explicitly self-approve; enable prevention of
+   self-review once another release maintainer can approve.
 3. While the repository is still private, check your GitHub plan before
    configuring publishers. Free private repositories
    do not provide the environment protections this workflow expects. Pro/Team
@@ -114,8 +121,8 @@ publishers and environments are not prerequisites for production publishing.
    Organization policies must permit this job-level permission and the pinned
    actions used by the workflow.
 
-For `pypi`, select release maintainers as Required reviewers and disable routine
-administrator bypass. A single maintainer can use explicit self-approval as a
+For both environments, select release maintainers as Required reviewers and
+disable administrator bypass. A single maintainer can use explicit self-approval as a
 release confirmation, but it is not separation of duties. Once another trusted
 release approver is available, enable Prevent self-review. Inspect the exact
 candidate SHA and artifact before approval, including workflow changes.
@@ -123,10 +130,13 @@ candidate SHA and artifact before approval, including workflow changes.
 Before the first public release, verify these settings in GitHub (not only the
 YAML). Check that a fork PR runs only unprivileged CI, cannot deploy to `pypi`, and
 cannot introduce an artifact into a release run. Confirm that unauthorized tag
-creation is rejected and production waits for the designated approver. The local
-workflow tests check configuration contracts; they do not prove the live rules
-are enabled. Do not turn on production publishing until these controls are in
-place. Changing visibility alone does not configure them.
+creation is rejected and each upload waits for the designated approver.
+Actionlint checks workflow syntax; review permissions, job dependencies and
+artifact inputs in the workflow itself. Library unit tests do not assert workflow
+text, and static checks do not prove that live rules or OIDC work. Confirm these
+through the authorized rehearsal and production runs. Do not turn on production
+publishing until the required platform controls are in place. Changing visibility
+alone does not configure them.
 
 | Publisher field | TestPyPI | PyPI |
 | --- | --- | --- |
@@ -155,46 +165,57 @@ are pinned to commit SHAs; review their updates as dependency changes.
    gh workflow run publish.yml --ref main -f target=check
    ```
 
-4. Create and push a version tag on the intended reviewed main commit, for
-   example `v0.1.0` for version `0.1.0`. The publish guard requires the exact
-   `v<project.version>` tag, checks that checkout/tag/workflow identify the same
-   commit, and verifies that commit belongs to `main`. An older main commit is
-   allowed; a branch or an unmerged commit is not. This push **starts production**,
-   so finish the one-time settings before pushing the tag. For example, after
-   selecting the reviewed commit locally:
-
-   ```sh
-   git tag -a v0.1.0 -m "Release v0.1.0"
-   git push origin refs/tags/v0.1.0
-   ```
-
-   Push one release tag at a time using your authorized maintainer credentials.
-   GitHub does not trigger a new push workflow for tags pushed using a workflow's
-   `GITHUB_TOKEN`. Do not use a GitHub Release as a way to create the version tag;
-   this workflow creates the Release after verifying PyPI.
+4. Choose the next action: use the manual TestPyPI procedure below for a rehearsal,
+   or create a production tag only when ready to publish to PyPI. A rehearsal
+   does not need a version tag.
 
 Inspect the wheel and sdist under the `distributions` artifact before approving
 an upload. The artifact contains package files only, not verification logs.
 Artifacts expire after 14 days; they are transfer storage, not a permanent
 release archive.
 
-## TestPyPI rehearsal and production release
+## Optional TestPyPI rehearsal
 
 For the first release, or after changes to the build backend, publishing workflow
-or authentication setup, a TestPyPI rehearsal is recommended:
+or authentication setup, use a reviewed main candidate with an unused version
+such as `0.1.0.dev1`. After merging the version PR, dispatch:
 
 ```sh
-gh workflow run publish.yml --ref v0.1.0 -f target=testpypi
+gh workflow run publish.yml --ref main -f target=testpypi
 ```
 
-Pushing that tag also starts a production run. Leave its `pypi` approval pending
-while rehearsing; production and rehearsal do not block each other. If the
-rehearsal fails, investigate before approving production. The approval is the
-intentional hold point, not a programmatic TestPyPI dependency.
+Do not create a production tag for this rehearsal. The guard requires the main
+branch, verifies that the checkout matches the workflow SHA and belongs to main,
+and reads the version from `pyproject.toml`. A later main commit does not change
+the candidate SHA of an already started run. Dispatching from a tag or another
+branch fails before upload.
 
-The manual rehearsal runs the shared checks, uploads only to TestPyPI and verifies installation
-from TestPyPI. It never enters the production environment. A successful rehearsal
-validates the test publisher, not the production publisher's configuration.
+Shared checks and artifact validation run before the `testpypi` approval. Inspect
+the candidate SHA, version and artifact, then approve. Only TestPyPI receives the
+upload; the workflow verifies its installed wheel and skips production and
+GitHub Release creation. This validates the test publisher, not the production
+publisher's configuration. Once the rehearsal succeeds, subsequent development
+and other releases can use PyPI directly.
+
+## Production release
+
+Create and push a version tag on the intended reviewed main commit, for
+example `v0.1.0` for version `0.1.0`. The publish guard requires the exact
+`v<project.version>` tag, checks that checkout/tag/workflow identify the same
+commit, and verifies that commit belongs to `main`. An older main commit is
+allowed; a branch or an unmerged commit is not. This push **starts production**,
+so finish the one-time settings before pushing the tag. For example, after
+selecting the reviewed commit locally:
+
+```sh
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin refs/tags/v0.1.0
+```
+
+Push one release tag at a time using your authorized maintainer credentials.
+GitHub does not trigger a new push workflow for tags pushed using a workflow's
+`GITHUB_TOKEN`. Do not use a GitHub Release as a way to create the version tag;
+this workflow creates the Release after verifying PyPI.
 
 The tag-push production run performs these steps in order, without contacting
 TestPyPI. Open **Actions → Publish** for that tag; no manual dispatch is needed:
@@ -217,8 +238,7 @@ TestPyPI. Open **Actions → Publish** for that tag; no manual dispatch is neede
 
 Both paths verify the wheel downloaded from their selected index against the
 artifact built in that run. There is no cross-run or cross-index artifact reuse
-or hash comparison. Rehearse before approving production when appropriate;
-TestPyPI is not an automatic release gate.
+or hash comparison. TestPyPI is not an automatic release gate.
 
 Build and verification jobs have no OIDC permission. Upload jobs have only
 `id-token: write`, download a specific artifact ID from the current run, and
@@ -255,8 +275,10 @@ PyPI uploads do not skip existing files. A network or post-upload verification
 failure can occur **after publication has succeeded**, or after only some files
 have been accepted. Inspect the index before retrying. Re-run failed jobs only
 when the original artifact remains available and the missing step is safe to
-repeat; do not rerun an already successful upload. Published filenames cannot be
-overwritten, and deleting a release does not make those filenames reusable.
+repeat; do not rerun an already successful upload. If an upload accepted only some
+files and cannot safely resume, prepare a new version and approve it separately;
+do not enable production `skip-existing` as a workaround. Published filenames
+cannot be overwritten, and deleting a release does not make them reusable.
 
 There is no custom retry loop: if the index has not exposed an uploaded wheel yet,
 the verification job fails and can be rerun after checking the index. Failure of

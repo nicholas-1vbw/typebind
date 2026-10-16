@@ -49,8 +49,6 @@ dev = [
     "twine>=6.2",
     "typebind-example-core",
     "typebind-example-extra",
-    "pyyaml>=6",
-    "types-pyyaml>=6",
     "packaging>=25",
 ]
 

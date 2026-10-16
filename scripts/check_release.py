@@ -1,4 +1,4 @@
-"""Reject uploads unless the selected version tag identifies a commit on main."""
+"""Validate production tag or manual main candidates before an index upload."""
 
 import os
 import subprocess
@@ -14,29 +14,33 @@ def git(*args: str) -> str:
 
 
 def main() -> None:
-    if (
-        os.environ.get("GITHUB_EVENT_NAME") == "push"
-        and os.environ.get("RELEASE_REF_PROTECTED") != "true"
-    ):
-        raise ValueError("Production releases require a protected version tag")
     project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
-    expected_ref = f"refs/tags/v{project['version']}"
-    if os.environ["GITHUB_REF"] != expected_ref:
-        raise ValueError(f"Select the version tag {expected_ref}, not a branch or another version")
-    commit = os.environ["GITHUB_SHA"]
-    if (
-        git("rev-parse", "HEAD") != commit
-        or git("rev-parse", f"{expected_ref}^{{commit}}") != commit
-    ):
-        raise ValueError(
-            "The checkout, version tag and workflow commit must identify the same commit"
-        )
+    version = Version(project["version"])
+    ref, commit = os.environ["GITHUB_REF"], os.environ["GITHUB_SHA"]
+    if git("rev-parse", "HEAD") != commit:
+        raise ValueError("The checkout and workflow must identify the same commit")
+
+    event = os.environ["GITHUB_EVENT_NAME"]
+    if event == "push":
+        if os.environ.get("RELEASE_REF_PROTECTED") != "true":
+            raise ValueError("Production releases require a protected version tag")
+        expected_ref = f"refs/tags/v{project['version']}"
+        if ref != expected_ref:
+            raise ValueError(f"Production requires the version tag {expected_ref}")
+        if git("rev-parse", f"{ref}^{{commit}}") != commit:
+            raise ValueError("The version tag and workflow must identify the same commit")
+    elif event == "workflow_dispatch":
+        if ref != "refs/heads/main":
+            raise ValueError("TestPyPI rehearsals must be dispatched from main")
+    else:
+        raise ValueError(f"Unsupported upload event: {event}")
+
     subprocess.run(["git", "merge-base", "--is-ancestor", commit, "origin/main"], check=True)
-    # GitHub Release metadata is derived from the same project version as the tag.
+    # Both concurrency and Release metadata consume the project's validated version.
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a") as stream:
-            stream.write(f"prerelease={str(Version(project['version']).is_prerelease).lower()}\n")
-    print(f"Verified {expected_ref} at {commit} is on main")
+            stream.write(f"version={version}\nprerelease={str(version.is_prerelease).lower()}\n")
+    print(f"Verified {ref} at {commit} is on main (version {version})")
 
 
 if __name__ == "__main__":

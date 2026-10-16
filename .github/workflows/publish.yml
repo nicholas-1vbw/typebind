@@ -15,11 +15,6 @@ on:
 permissions:
   contents: read
 
-# Serialize each index without blocking a rehearsal behind production approval.
-concurrency:
-  group: publish-${{ github.event_name == 'push' && 'pypi' || inputs.target }}
-  cancel-in-progress: false
-
 jobs:
   check:
     name: Full release checks
@@ -33,6 +28,7 @@ jobs:
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       prerelease: ${{ steps.release.outputs.prerelease }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,7 +42,7 @@ jobs:
         run: uv python install
       - name: Sync locked dependencies
         run: uv sync --locked
-      - name: Verify release tag, version and main ancestry
+      - name: Verify upload candidate, version and main ancestry
         id: release
         if: github.event_name == 'push' || inputs.target == 'testpypi'
         env:
@@ -69,9 +65,13 @@ jobs:
 
   testpypi:
     name: Upload to TestPyPI
-    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
+    # Serialize uploads of this version without blocking other versions or PyPI.
+    concurrency:
+      group: publish-testpypi-${{ needs.build.outputs.version }}
+      cancel-in-progress: false
     environment:
       name: testpypi
       url: https://test.pypi.org/p/typebind
@@ -120,6 +120,9 @@ jobs:
     if: github.event_name == 'push' && github.ref_type == 'tag' && github.ref_protected
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: publish-pypi-${{ needs.build.outputs.version }}
+      cancel-in-progress: false
     environment:
       name: pypi
       url: https://pypi.org/p/typebind
