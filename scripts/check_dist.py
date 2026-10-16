@@ -9,6 +9,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from time import sleep
 
 from packaging.utils import parse_sdist_filename, parse_wheel_filename
 from packaging.version import Version
@@ -17,6 +18,42 @@ from packaging.version import Version
 def run(*args: str, cwd: Path) -> None:
     """Propagate a failed native tool command without hiding its diagnostics."""
     subprocess.run(args, cwd=cwd, check=True)
+
+
+def install_index_wheel(
+    uv: str, python: Path, index_url: str, requirement: Path, *, cwd: Path
+) -> None:
+    """Allow bounded index propagation time without weakening candidate verification."""
+    for attempt, delay in enumerate((10, 20, 40, None), start=1):
+        try:
+            run(
+                uv,
+                "pip",
+                "install",
+                "--python",
+                str(python),
+                "--no-deps",
+                "--no-cache",
+                "--only-binary",
+                ":all:",
+                "--index-url",
+                index_url,
+                "--require-hashes",
+                "-r",
+                str(requirement),
+                cwd=cwd,
+            )
+        except subprocess.CalledProcessError:
+            if delay is None:
+                raise
+            print(
+                f"Index wheel installation attempt {attempt}/4 failed; retrying in {delay}s.",
+                file=sys.stderr,
+                flush=True,
+            )
+            sleep(delay)
+        else:
+            return
 
 
 def artifact(directory: Path, pattern: str) -> Path:
@@ -94,21 +131,11 @@ def main() -> None:
             requirement = temporary / "candidate.txt"
             digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
             requirement.write_text(f"{name}=={version} --hash=sha256:{digest}\n")
-            run(
+            install_index_wheel(
                 uv,
-                "pip",
-                "install",
-                "--python",
-                str(python),
-                "--no-deps",
-                "--no-cache",
-                "--only-binary",
-                ":all:",
-                "--index-url",
+                python,
                 index_url,
-                "--require-hashes",
-                "-r",
-                str(requirement),
+                requirement,
                 cwd=temporary,
             )
             # Resolve dependencies from the hash-verified installed wheel's metadata.
