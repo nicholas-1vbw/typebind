@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 
-def check_dist(directory: Path) -> subprocess.CompletedProcess[str]:
+def check_dist(directory: Path, *args: str) -> subprocess.CompletedProcess[str]:
     script = Path(__file__).resolve().parents[1] / "scripts/check_dist.py"
     return subprocess.run(
-        [sys.executable, "-O", str(script), "--dist-dir", str(directory)],
+        [sys.executable, "-O", str(script), "--dist-dir", str(directory), *args],
         capture_output=True,
         text=True,
         check=False,
@@ -55,3 +55,11 @@ def test_required_wheel_files_are_checked_under_optimization(
     result = check_dist(tmp_path)
     assert result.returncode != 0
     assert message in result.stderr
+
+
+def test_rejects_artifacts_from_a_different_candidate(tmp_path: Path) -> None:
+    (tmp_path / "typebind-0.1.0-py3-none-any.whl").touch()
+    (tmp_path / "typebind-0.1.0.tar.gz").touch()
+    result = check_dist(tmp_path, "--expected-version", "0.1.0a1")
+    assert result.returncode != 0
+    assert "Expected release 0.1.0a1; found 0.1.0" in result.stderr

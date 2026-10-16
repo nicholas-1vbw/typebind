@@ -53,8 +53,10 @@ package relationships without version constraints. Root uv source configuration
 selects the local examples during development; the integration test installs the
 library and plugin wheels built from this checkout and verifies their installation
 origins. Changing the main package version does not require bumping the examples'
-own versions. Prerelease candidates use the same installation checks with their
-declared version; the release workflow verifies the actual candidate rather than
+own versions. Git retains the target `x.y.z` version; release preparation writes
+the full candidate version only into the CI working copy, as described in
+[Releasing](docs/releasing.md#prepare-and-check-a-candidate). Prerelease candidates
+use the same installation checks with their prepared version; the release workflow verifies the actual candidate rather than
 creating additional synthetic development and alpha versions in each test run.
 
 To check the minimum supported Python on POSIX shells, run

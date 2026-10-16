@@ -10,14 +10,14 @@ The [Publish workflow](https://github.com/nicholas-1vbw/typebind/blob/main/.gith
 starts production automatically when a `v*` tag is pushed. It runs full checks,
 verifies the tag, version and main ancestry, builds distributions, waits for the
 configured `pypi` approval, uploads to PyPI, verifies installation, then creates
-GitHub Release notes and attaches the same distributions. Approval is enforced
+GitHub Release notes and attaches the same distributions for non-development versions. Approval is enforced
 by GitHub environment settings, not by the presence of `environment` in YAML.
 
 | Trigger | Path after shared CI, build and artifact validation |
 | --- | --- |
-| Manual `check` (default) | Stop; no upload or publishing environment |
-| Manual `testpypi` on `main` | TestPyPI approval, upload and installed-wheel verification; no version tag |
-| Push a protected `v*` tag | Production approval, PyPI upload, installed-wheel verification, GitHub Release |
+| Manual `check` (default) | Validate the base version, or an explicit candidate version; no upload or publishing environment |
+| Manual `testpypi` on `main`, with an explicit version | TestPyPI approval, upload and installed-wheel verification; no version tag or GitHub Release |
+| Push a protected `v*` tag | Production approval, PyPI upload and installed-wheel verification; GitHub Release except for `.devN` versions |
 
 There is no manual production target. Merging a PR, pushing a branch, or creating
 a GitHub Release does not trigger publication. Ordinary CI never uploads.
@@ -34,7 +34,8 @@ queued. This is not a durable release queue or a substitute for checking an
 index before retrying.
 
 Development (`.devN`), alpha, beta, rc and stable version tags all publish to
-PyPI. TestPyPI validates changes to the publishing process; it is not a daily
+PyPI. Development versions do not create GitHub Releases. Alpha, beta and rc
+versions create GitHub prereleases; stable versions create regular releases. TestPyPI validates changes to the publishing process; it is not a daily
 development-release channel and is not required again after a successful rehearsal.
 
 ## Public contributions and release authority
@@ -178,22 +179,48 @@ Workflow files own runner labels; `.python-version`, `pyproject.toml` and
 
 ## Prepare and check a candidate
 
-1. Change `project.version` in `pyproject.toml`, run `uv lock`, and review the
-   release notes and public package contents. Keep version changes in a PR.
-   Use canonical versions such as `0.1.0.dev1` or `0.1.0a1`. The local plugin
-   examples consume this checkout, not independently selected typebind releases.
-   Their own fixture versions do not need to change with the library version.
-2. Run `uv sync --locked` followed by `uv run --no-sync poe check` locally and require the full hosted CI matrix
-   on the final commit. Merge the reviewed changes to `main`.
-3. To check without uploading, dispatch the current `main` snapshot:
+Keep `project.version` in Git as the canonical three-component target version,
+for example `0.1.0`. Change it and update `uv.lock` in a reviewed PR when moving
+to another release series such as `0.1.1` or `0.2.0`. Individual dev, alpha, beta
+and rc releases do not need version-bump commits. Local builds without release
+preparation retain this base version; they do not identify individual development
+commits.
+
+For production, the protected tag supplies the full version: `v0.1.0.dev1`,
+`v0.1.0a1`, `v0.1.0b1`, `v0.1.0rc1` or `v0.1.0`. For a manual rehearsal, the
+`version` input supplies it. The release guard uses `packaging.version.Version`
+to require the same three release components as the source base, not a string
+prefix match. Noncanonical spellings, epochs, local versions and post releases
+are rejected. Upload candidates must still identify the checked-out commit and
+belong to main.
+
+After syncing the committed lockfile, release preparation uses native
+`uv version <full-version> --no-sync --offline` to update `pyproject.toml` and
+local package metadata in `uv.lock` in the CI working copy only. Dependencies
+remain locked; no version change is committed or pushed back to Git. The sdist
+contains the prepared full version, so rebuilding it does not require the tag
+or another suffix input. Both distributions must match the selected full version
+before upload. The local plugin examples continue to consume this checkout;
+their own fixture versions do not change.
+
+1. Review the candidate's code, release notes and public package contents. Require
+   the full hosted CI matrix on the final commit and merge the reviewed changes.
+2. To check without uploading, dispatch a snapshot with the base version:
 
    ```sh
    gh workflow run publish.yml --ref main -f target=check
    ```
 
-4. Choose the next action: use the manual TestPyPI procedure below for a rehearsal,
-   or create a production tag only when ready to publish to PyPI. A rehearsal
-   does not need a version tag.
+   To verify a prerelease candidate without uploading, supply its full version:
+
+   ```sh
+   gh workflow run publish.yml --ref main -f target=check -f version=0.1.0a1
+   ```
+
+   The `check` target also accepts PR branches for validating changes to release
+   preparation. Only checks/builds run; neither upload environment is entered.
+3. After the candidate passes, choose a TestPyPI rehearsal or an authorized
+   production tag push. A rehearsal does not need a version tag.
 
 Inspect the wheel and sdist under the `distributions` artifact before approving
 an upload. The artifact contains package files only, not verification logs.
@@ -203,16 +230,17 @@ release archive.
 ## Optional TestPyPI rehearsal
 
 For the first release, or after changes to the build backend, publishing workflow
-or authentication setup, use a reviewed main candidate with an unused version
-such as `0.1.0.dev1`. After merging the version PR, dispatch:
+or authentication setup, use a reviewed main candidate and select an unused full
+version in its base series, such as `0.1.0.dev1` for base `0.1.0`. Dispatch:
 
 ```sh
-gh workflow run publish.yml --ref main -f target=testpypi
+gh workflow run publish.yml --ref main -f target=testpypi -f version=0.1.0.dev1
 ```
 
 Do not create a production tag for this rehearsal. The guard requires the main
 branch, verifies that the checkout matches the workflow SHA and belongs to main,
-and reads the version from `pyproject.toml`. A later main commit does not change
+and checks the explicit version against the base in `pyproject.toml`. A missing
+version fails before upload. A later main commit does not change
 the candidate SHA of an already started run. Dispatching from a tag or another
 branch fails before upload.
 
@@ -226,16 +254,17 @@ and other releases can use PyPI directly.
 ## Production release
 
 Create and push a version tag on the intended reviewed main commit, for
-example `v0.1.0` for version `0.1.0`. The publish guard requires the exact
-`v<project.version>` tag, checks that checkout/tag/workflow identify the same
-commit, and verifies that commit belongs to `main`. An older main commit is
+example `v0.1.0a1` for the first alpha of base `0.1.0`. The publish guard requires
+a canonical `v<full-version>` tag in the source base series, checks that
+checkout/tag/workflow identify the same commit, and verifies that commit belongs
+to `main`. An older main commit is
 allowed; a branch or an unmerged commit is not. This push **starts production**,
 so finish the one-time settings before pushing the tag. For example, after
 selecting the reviewed commit locally:
 
 ```sh
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin refs/tags/v0.1.0
+git tag -a v0.1.0a1 -m "Release v0.1.0a1"
+git push origin refs/tags/v0.1.0a1
 ```
 
 Push one release tag at a time using your authorized maintainer credentials.
@@ -247,8 +276,9 @@ The tag-push production run performs these steps in order, without contacting
 TestPyPI. Open **Actions → Publish** for that tag; no manual dispatch is needed:
 
 1. Run the reusable full CI matrix at the tagged commit (not a previous run's result).
-2. Build the sdist and wheel once for publication, then validate them using the
-   existing `poe check-dist` entry point.
+2. Prepare the full version in the build checkout, build the sdist and wheel once
+   for publication, then validate them against that version using the existing
+   `poe check-dist --expected-version <full-version>` entry point.
 3. Wait for the configured `pypi` environment approval. Inspect the selected
    tag/SHA, successful checks and candidate artifact, then approve.
 4. Upload the **same validated workflow artifact** to PyPI, without rebuilding.
@@ -261,10 +291,11 @@ TestPyPI. Open **Actions → Publish** for that tag; no manual dispatch is neede
    resolution enabled directly.
    Run the model, manual assembly and decorator examples outside the checkout,
    plus strict Pyright against the installed package.
-6. Create a GitHub Release for the existing tag with generated release notes and
-   the same wheel/sdist as assets. Native `gh release create --verify-tag` refuses
-   to create a missing tag. The project's PEP 440 version determines whether the
-   GitHub Release is marked as a prerelease, including development versions.
+6. For non-development versions, create a GitHub Release for the existing tag
+   with generated release notes and the same wheel/sdist as assets. Native
+   `gh release create --verify-tag` refuses to create a missing tag. Alpha, beta
+   and rc versions are marked as prereleases. Versions with a `.devN` component
+   skip this step; their PyPI upload and installation verification still run.
 
 Both paths verify the wheel downloaded from their selected index against the
 artifact built in that run. There is no cross-run or cross-index artifact reuse

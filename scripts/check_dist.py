@@ -11,6 +11,7 @@ import zipfile
 from pathlib import Path
 
 from packaging.utils import parse_sdist_filename, parse_wheel_filename
+from packaging.version import Version
 
 
 def run(*args: str, cwd: Path) -> None:
@@ -38,6 +39,7 @@ def main() -> None:
     parser.add_argument(
         "--constraint", type=Path, help="Use these runtime constraints instead of the lockfile"
     )
+    parser.add_argument("--expected-version", type=Version, help="Require this release version")
     args = parser.parse_args()
     distribution_dir = Path(args.dist_dir).resolve()
     index_url: str | None = args.index_url
@@ -48,6 +50,8 @@ def main() -> None:
     name, version, _, _ = parse_wheel_filename(wheel.name)
     if parse_sdist_filename(sdist.name) != (name, version):
         raise ValueError(f"Wheel and sdist identify different releases: {wheel.name}, {sdist.name}")
+    if args.expected_version is not None and version != args.expected_version:
+        raise ValueError(f"Expected release {args.expected_version}; found {version}")
     if index_url is not None and not index_url.startswith(("https://", "http://127.0.0.1:")):
         raise ValueError("Use an HTTPS index (or loopback HTTP for local integration tests)")
     uv = shutil.which("uv")
