@@ -14,6 +14,7 @@ from ._models import (
     IdentityDiscriminatedModel,
     bind_variants,
     build_adapter,
+    model,
     tag_field,
 )
 
@@ -32,4 +33,5 @@ __all__ = [
     "discover_variants",
     "select_variants",
     "tag_field",
+    "model",
 ]

@@ -56,6 +56,7 @@ def main() -> None:
         "src/typebind/py.typed",
         "tests/test_models.py",
         "examples/models.py",
+        "examples/decorators.py",
         "examples/manual.py",
         "examples/discovery.py",
         "examples/plugins/core/pyproject.toml",
@@ -117,7 +118,7 @@ def main() -> None:
             ),
             cwd=temporary,
         )
-        for example in ("models.py", "manual.py"):
+        for example in ("models.py", "manual.py", "decorators.py"):
             run(str(python), str(temporary / example), cwd=temporary)
     print("Verified wheel metadata, MIT license, py.typed, sdist contents and isolated examples.")
 

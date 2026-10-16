@@ -162,11 +162,74 @@ DiscoveredVariant(Document, discovered[0].entry_point)
 """
 
 
-@pytest.mark.parametrize("base", ["DiscriminatedModel", "IdentityDiscriminatedModel"])
-def test_strict_downstream_typing(tmp_path: Path, base: str) -> None:
-    source = SOURCE.replace(
-        "class Message[Kind: str](DiscriminatedModel)", f"class Message[Kind: str]({base})"
-    )
+DECORATOR_SOURCE = """\
+from typing import Annotated, assert_type
+from pydantic import BaseModel, TypeAdapter
+from typebind import IdentityDiscriminatedModel, model, build_adapter, bind_variants
+
+@model(tag="kind")
+class Message(IdentityDiscriminatedModel):
+    identifier: str
+
+@model(tag="method", variant="request")
+class Request(Message):
+    sequence: int
+
+@model(variant="query")
+class Query(Request):
+    text: str
+
+query = Query(identifier="q", sequence=1, text="hi")
+assert_type(query, Query)
+assert_type(query.identifier, str)
+assert_type(query.sequence, int)
+assert_type(query.text, str)
+assert_type(query.model_copy(update={"text": "copy"}, deep=True), Query)
+def accepts_request(value: Request) -> int:
+    return value.sequence
+assert_type(accepts_request(query), int)
+adapter = build_adapter(Message, variants=[Query])
+assert_type(adapter, TypeAdapter[Message])
+assert_type(adapter.validate_json(b'{}').identifier, str)
+binding = bind_variants([Query])
+class Envelope(BaseModel):
+    requests: list[Annotated[Request, binding]]
+assert_type(Envelope(requests=[query]).requests[0].sequence, int)
+"""
+
+DECORATOR_INVALID = """\
+Query(identifier="q", sequence=1)
+Query(identifier="q", sequence="wrong", text="hi")
+Query(identifier=1, sequence=1, text="hi")
+Query(identifier="q", sequence=1, text=2)
+query.text = 3
+query.missing
+query.method
+Query(identifier="q", sequence=1, text="hi", method="query")
+class BadBase(Query): text: int
+model(tag="kind")(object)
+model(variant="query")(object)
+model(tag="method", variant=123)
+model(tag=123)
+model("kind")
+"""
+
+
+@pytest.mark.parametrize(
+    "source, invalid",
+    [
+        (SOURCE, INVALID),
+        (
+            SOURCE.replace(
+                "class Message[Kind: str](DiscriminatedModel)",
+                "class Message[Kind: str](IdentityDiscriminatedModel)",
+            ),
+            INVALID,
+        ),
+        (DECORATOR_SOURCE, DECORATOR_INVALID),
+    ],
+)
+def test_strict_downstream_typing(tmp_path: Path, source: str, invalid: str) -> None:
     (tmp_path / "pyrightconfig.json").write_text(
         json.dumps({"typeCheckingMode": "strict", "pythonVersion": "3.12"})
     )
@@ -185,12 +248,12 @@ def test_strict_downstream_typing(tmp_path: Path, base: str) -> None:
     positive = subprocess.run(command, capture_output=True, text=True, check=False)
     assert positive.returncode == 0, positive.stdout + positive.stderr
     assert json.loads(positive.stdout)["summary"]["errorCount"] == 0
-    sample.write_text(source + INVALID)
+    sample.write_text(source + invalid)
     negative = subprocess.run(command, capture_output=True, text=True, check=False)
     assert negative.returncode != 0
     diagnostics = json.loads(negative.stdout)["generalDiagnostics"]
     errors = [item for item in diagnostics if item["severity"] == "error"]
     first = len(source.splitlines())
-    for line in range(first, first + len(INVALID.splitlines())):
+    for line in range(first, first + len(invalid.splitlines())):
         assert any(item["range"]["start"]["line"] == line for item in errors), (line, errors)
     assert all(item["range"]["start"]["line"] >= first for item in errors)

@@ -1,10 +1,10 @@
-"""Native generic declarations and explicit Pydantic discriminated unions."""
+"""Generic/decorator declarations and explicit Pydantic discriminated unions."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from inspect import isabstract
-from typing import Annotated, Any, ClassVar, Self, TypeVar, cast
+from typing import Annotated, Any, ClassVar, Literal, Self, TypeVar, cast
 
 from pydantic import (
     BaseModel,
@@ -12,10 +12,19 @@ from pydantic import (
     GetCoreSchemaHandler,
     GetPydanticSchema,
     TypeAdapter,
+    create_model,
     model_validator,
 )
 from pydantic.fields import FieldInfo
 from pydantic_core import CoreSchema, core_schema
+
+# A declaration-style marker, stored only on generated fields. Tag names and
+# values are still read exclusively from the finalized Pydantic model_fields.
+_DECORATED_TAG = object()
+
+
+def _decorated_field(field: FieldInfo) -> bool:
+    return any(item is _DECORATED_TAG for item in field.metadata)
 
 
 def _tag_default() -> object:
@@ -133,11 +142,12 @@ def _with_tag_defaults(schema: CoreSchema, model: type[DiscriminatedModel]) -> C
 
 
 class DiscriminatedModel(BaseModel):
-    """Declare model families with one generic discriminator per level.
+    """Declare model families with one discriminator per level.
 
     A family declares a str-bound type parameter and marks its field with
     ``tag_field()``. Subclasses select a tag through native
     ``Family[Literal["tag"]]`` specialization and may introduce another family.
+    Alternatively, @model generates runtime-only tag fields.
     The field declaration is the sole source of its name, type, and tag behavior.
 
     These hooks validate declarations without storing a second tag definition;
@@ -222,7 +232,9 @@ class DiscriminatedModel(BaseModel):
                 _literal_tag(cls, field_name)
             return
         parent_discriminator = _open_discriminator(parent)
-        if parent_discriminator is not None:
+        if parent_discriminator is not None and not _decorated_field(
+            parent.model_fields[parent_discriminator]
+        ):
             family = parent.__pydantic_generic_metadata__["origin"] or parent
             raise TypeError(
                 f"{_model_name(cls)}.{parent_discriminator}: the inherited discriminator "
@@ -236,6 +248,17 @@ class DiscriminatedModel(BaseModel):
                     f"{_model_name(cls)}.{name}: the inherited discriminator from "
                     f"{_model_name(parent)} cannot be removed. Keep the inherited model field."
                 )
+            if _is_open_tag(parent.model_fields[name].annotation):
+                # Decorators run after class creation. Keep an inherited open
+                # decorator field pending until @model binds it. Assembly
+                # rejects any model whose discriminator is still open.
+                cls._check_tag_field(name)
+                annotation = cls.model_fields[name].annotation
+                if not _is_open_tag(annotation):
+                    _literal_tag(cls, name)
+                elif annotation is not str or not _decorated_field(cls.model_fields[name]):
+                    raise TypeError(f"{_model_name(cls)}.{name}: preserve the open family field")
+                continue
             inherited_tag = _literal_tag(parent, name)
             tag = _literal_tag(cls, name)
             if tag != inherited_tag:
@@ -246,6 +269,13 @@ class DiscriminatedModel(BaseModel):
                 )
             cls._check_tag_field(name)
         candidates = [name for name in _tag_fields(cls) if name not in inherited_fields]
+        if candidates and any(
+            _is_open_tag(cls.model_fields[name].annotation) for name in inherited_fields
+        ):
+            raise TypeError(
+                f"{_model_name(cls)}: bind the inherited discriminator before introducing "
+                "another family; use @model(tag='field', variant='value')"
+            )
         if len(candidates) > 1:
             raise TypeError(
                 f"{_model_name(cls)}: found new tag fields {candidates!r}. "
@@ -256,6 +286,14 @@ class DiscriminatedModel(BaseModel):
         if discriminator is not None:
             parameters = metadata["parameters"]
             field = cls.model_fields[discriminator]
+            if _decorated_field(field):
+                if parameters or field.annotation is not str:
+                    raise TypeError(
+                        f"{_model_name(cls)}.{discriminator}: a decorated family must "
+                        "introduce one non-generic string discriminator"
+                    )
+                cls._check_tag_field(discriminator)
+                return
             if (
                 len(parameters) != 1
                 or cast(object, field.annotation) is not parameters[0]
@@ -321,6 +359,89 @@ class IdentityDiscriminatedModel(DiscriminatedModel):
         return self
 
 
+def _decorator_model(value: object) -> type[DiscriminatedModel]:
+    if not isinstance(value, type) or not issubclass(value, DiscriminatedModel):
+        raise TypeError("Decorators require a DiscriminatedModel class")
+    if value.__pydantic_generic_metadata__["parameters"]:
+        raise TypeError(f"{_model_name(value)}: specialize explicit generic parameters first")
+    return value
+
+
+def _extend[T: DiscriminatedModel](model: type[T], fields: dict[str, Any]) -> type[T]:
+    """Use native inheritance so payload fields, methods and super() keep working."""
+    return create_model(
+        model.__name__,
+        __base__=model,
+        __module__=model.__module__,
+        __qualname__=model.__qualname__,
+        __doc__=model.__doc__,
+        **fields,
+    )
+
+
+def model[T: DiscriminatedModel](
+    *, tag: str | None = None, variant: str | None = None
+) -> Callable[[type[T]], type[T]]:
+    """Bind a parent variant, introduce a tag field, or do both at declaration time.
+
+    ``variant`` is the value of the inherited open discriminator; ``tag`` is the
+    name of a new open string field on this level. At least one is required.
+    Both together bind the parent first, then introduce the next family.
+
+    Ordinary fields and methods retain their static types. Generated tag fields
+    are runtime-only; no generic parameter, stub or whole-model Any is introduced.
+    Finalized fields own tags and defaults. Assembly checks cross-type conflicts;
+    construction performs no decorator reflection or routing work.
+    """
+    if tag is None and variant is None:
+        raise ValueError("@model requires at least one of tag or variant")
+    if tag is not None and (
+        not isinstance(cast(object, tag), str) or not tag or tag.startswith("_")
+    ):
+        raise ValueError("tag must be a non-empty field name without a leading underscore")
+    if variant is not None and (not isinstance(cast(object, variant), str) or not variant):
+        raise ValueError("variant must be a non-empty string")
+
+    def decorate(cls: type[T]) -> type[T]:
+        _decorator_model(cls)
+        inherited = _open_discriminator(cls)
+        fields: dict[str, Any] = {}
+        if variant is not None:
+            if inherited is None:
+                raise TypeError(
+                    f"{_model_name(cls)}: variant= requires an open family discriminator"
+                )
+            fields[inherited] = (cast(Any, Literal)[variant], cls.model_fields[inherited])
+        elif inherited is not None:
+            raise TypeError(
+                f"{_model_name(cls)}.{inherited}: bind the inherited discriminator "
+                "before introducing another family; supply variant= to @model"
+            )
+        if tag is not None:
+            if tag in cls.model_fields or hasattr(cls, tag):
+                raise TypeError(
+                    f"{_model_name(cls)}.{tag}: discriminator conflicts with "
+                    "an existing field or attribute"
+                )
+            field = cast(FieldInfo, tag_field())
+            field.metadata.append(_DECORATED_TAG)
+            fields[tag] = (str, field)
+        return _extend(cls, fields)
+
+    return decorate
+
+
+def _declared_discriminator(model: type[DiscriminatedModel]) -> str | None:
+    """Identify family owners, excluding pending subclasses that only inherit a tag."""
+    name = _open_discriminator(model)
+    if name is None:
+        return None
+    for parent in model.__bases__:
+        if issubclass(parent, DiscriminatedModel) and name in _tag_fields(parent):
+            return None
+    return name
+
+
 def _branches(
     variants: Iterable[type[DiscriminatedModel]],
 ) -> dict[type[DiscriminatedModel], dict[str, type[DiscriminatedModel]]]:
@@ -340,7 +461,7 @@ def _branches(
             for base in reversed(variant.__mro__)
             if issubclass(base, DiscriminatedModel)
             and base.__pydantic_generic_metadata__["origin"] is None
-            and _open_discriminator(base) is not None
+            and _declared_discriminator(base) is not None
         ]
         for index, parent in enumerate(families):
             name = _open_discriminator(parent)
