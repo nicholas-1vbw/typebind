@@ -230,7 +230,11 @@ TestPyPI. Open **Actions → Publish** for that tag; no manual dispatch is neede
 4. Upload the **same validated workflow artifact** to PyPI, without rebuilding.
 5. Install the PyPI wheel into a fresh environment using `uv pip`, with cache
    disabled, no dependencies and a required SHA256 derived from the candidate
-   wheel. Install locked runtime dependencies separately from ordinary PyPI.
+   wheel. Then let uv resolve the installed wheel's declared dependencies from
+   ordinary PyPI, using the exported runtime lock as constraints, and run
+   `uv pip check`. The lock does not preinstall undeclared dependencies; TestPyPI is never
+   a dependency index. Local artifact checks install the wheel with dependency
+   resolution enabled directly.
    Run the model, manual assembly and decorator examples outside the checkout,
    plus strict Pyright against the installed package.
 6. Create a GitHub Release for the existing tag with generated release notes and

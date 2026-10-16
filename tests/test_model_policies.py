@@ -49,9 +49,6 @@ def test_native_schema_has_no_marking_callback() -> None:
     schema = TypeAdapter(NativeQuery).core_schema
     assert schema["type"] == "model"
     assert schema["schema"]["type"] == "model-fields"
-    assert not hasattr(NativeQuery, "_mark_bound_tags")
-    assert vars(NativeQuery)["_bound_tag_names"] == ("kind", "method")
-    assert not hasattr(DiscriminatedModel, "_mark_bound_tags")
     assert NativeQuery(text="x").model_fields_set == {"text"}
     assert IdentityQuery(text="x").model_fields_set == {"kind", "method", "text"}
 
@@ -85,9 +82,15 @@ def test_both_export_policies_preserve_native_defaults_and_nested_routing(
     assert ("kind" in native.model_dump(exclude_unset=True)) is explicit
     assert "kind" in identity.model_dump(exclude_unset=True)
     assert "note" not in identity.model_dump(exclude_unset=True)
-    for value in (native, identity):
-        assert "kind" not in value.model_dump(exclude_defaults=True)
-        assert "kind" not in value.model_dump(exclude={"kind"})
+    # Lossy exports cannot be routed, but a concrete class can restore its defaults.
+    for value, adapter in ((native, native_adapter), (identity, identity_adapter)):
+        for wire in (
+            value.model_dump_json(exclude_defaults=True),
+            value.model_dump_json(exclude={"kind"}),
+        ):
+            with pytest.raises(ValidationError, match="union_tag_not_found"):
+                adapter.validate_json(wire)
+            assert type(value).model_validate_json(wire) == value
     assert native_adapter.validate_json(native_adapter.dump_json(native)) == native
     assert (
         identity_adapter.validate_json(identity_adapter.dump_json(identity, exclude_unset=True))

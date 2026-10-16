@@ -207,6 +207,18 @@ def test_constructor_is_deferred_and_exceptions_preserved() -> None:
     assert "NeedsDependency" in captured.value.__notes__[-1]
 
 
+def test_non_implementation_class_is_rejected() -> None:
+    # Entry point exports may come from packages without static type checking.
+    with pytest.raises(TypeError, match="Expected an Implementation class"):
+        assemble(variants=[], implementations=[cast(Any, str)])
+
+
+@pytest.mark.parametrize("bare", [Implementation, type("Bare", (Implementation,), {})])
+def test_unspecialized_implementation_is_rejected(bare: type[object]) -> None:
+    with pytest.raises(TypeError, match=r"Implementation\["):
+        assemble(variants=[], implementations=[cast(Any, bare)])
+
+
 def test_abstract_and_invalid_declarations() -> None:
     class Missing(Implementation[Query], Describable):
         pass

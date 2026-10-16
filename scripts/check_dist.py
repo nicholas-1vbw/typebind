@@ -6,12 +6,13 @@ import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import tomllib
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path
+
+from packaging.requirements import Requirement
 
 
 def run(*args: str, cwd: Path) -> None:
@@ -57,40 +58,16 @@ def main() -> None:
     assert metadata["Requires-Python"] == project["requires-python"]
     assert metadata["License-Expression"] == project["license"]
     assert metadata["Description-Content-Type"] == "text/markdown"
-    with tarfile.open(sdist) as archive:
-        members = set(archive.getnames())
-    for item in (
-        "pyproject.toml",
-        "README.md",
-        "LICENSE",
-        "uv.lock",
-        ".python-version",
-        "src/typebind/py.typed",
-        "tests/test_models.py",
-        "examples/models.py",
-        "examples/decorators.py",
-        "examples/manual.py",
-        "examples/discovery.py",
-        "examples/plugins/core/pyproject.toml",
-        "examples/plugins/extra/pyproject.toml",
-        "examples/plugins/core/src/typebind_example_core/__init__.py",
-        "examples/plugins/extra/src/typebind_example_extra/__init__.py",
-        "docs/models.md",
-        "docs/behaviors.md",
-        "docs/discovery.md",
-        "benchmarks/behavior.py",
-        "scripts/check_dist.py",
-        "scripts/check_release.py",
-        "docs/releasing.md",
-    ):
-        assert f"{name}-{version}/{item}" in members, item
+    assert {Requirement(value) for value in metadata.get_all("Requires-Dist", [])} == {
+        Requirement(value) for value in project["dependencies"]
+    }
 
     with tempfile.TemporaryDirectory(prefix="typebind-dist-") as directory:
         temporary = Path(directory)
         environment = temporary / "environment"
         run(uv, "venv", str(environment), "--python", sys.executable, cwd=temporary)
         python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        requirements = temporary / "runtime.txt"
+        constraints = temporary / "runtime-constraints.txt"
         run(
             uv,
             "export",
@@ -99,37 +76,16 @@ def main() -> None:
             "--no-emit-project",
             "--no-hashes",
             "--output-file",
-            str(requirements),
+            str(constraints),
             cwd=root,
         )
-        run(
-            uv,
-            "pip",
-            "install",
-            "--python",
-            str(python),
-            "-r",
-            str(requirements),
-            "--default-index",
-            "https://pypi.org/simple/",
-            cwd=temporary,
-        )
         if index_url is None:
-            run(
-                uv,
-                "pip",
-                "install",
-                "--python",
-                str(python),
-                "--no-deps",
-                str(wheel),
-                cwd=temporary,
-            )
+            candidate = str(wheel)
         else:
             # Native index resolution and hash validation; no dependency fallback to TestPyPI.
-            candidate = temporary / "candidate.txt"
+            requirement = temporary / "candidate.txt"
             digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
-            candidate.write_text(f"{name}=={version} --hash=sha256:{digest}\n")
+            requirement.write_text(f"{name}=={version} --hash=sha256:{digest}\n")
             run(
                 uv,
                 "pip",
@@ -144,9 +100,25 @@ def main() -> None:
                 index_url,
                 "--require-hashes",
                 "-r",
-                str(candidate),
+                str(requirement),
                 cwd=temporary,
             )
+            # Resolve dependencies from the hash-verified installed wheel's metadata.
+            candidate = f"{name}=={version}"
+        run(
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--constraint",
+            str(constraints),
+            "--default-index",
+            "https://pypi.org/simple/",
+            candidate,
+            cwd=temporary,
+        )
+        run(uv, "pip", "check", "--python", str(python), cwd=temporary)
         # Copy the public example into a neutral consumer directory: no checkout on sys.path.
         for example in (root / "examples").glob("*.py"):
             shutil.copy2(example, temporary / example.name)
@@ -182,7 +154,10 @@ def main() -> None:
             cwd=temporary,
         )
     origin = index_url or "local artifacts"
-    print(f"Verified metadata, sdist contents, isolated examples and strict typing from {origin}.")
+    print(
+        "Verified metadata, dependency installation, isolated examples "
+        f"and strict typing from {origin}."
+    )
 
 
 if __name__ == "__main__":

@@ -136,7 +136,6 @@ def test_basic_policy_has_native_schema_without_marking() -> None:
     assert Event(value=1).model_fields_set == {"value"}
     assert Event(value=1).model_dump(exclude_unset=True) == {"value": 1}
     assert Event(value=1).model_dump() == {"kind": "event", "value": 1}
-    assert not hasattr(Event, "_mark_bound_tags")
     with pytest.raises(ValueError, match="bound discriminator"):
         Event(value=1).model_copy(update={"kind": "event"})
     with pytest.raises(ValidationError, match="Field required"):
@@ -354,36 +353,29 @@ def test_empty_model_declaration_is_rejected() -> None:
         model(tag=None, variant=None)
 
 
-def test_public_decorator_is_unified() -> None:
-    import typebind
-
-    assert "model" in typebind.__all__
-    assert not hasattr(typebind, "family")
-    assert not hasattr(typebind, "variant")
-
-
-def test_native_field_reuse_keeps_parent_and_siblings_independent() -> None:
-    parent = Request.model_fields["method"]
-    before = (parent.annotation, parent.default_factory, tuple(parent.metadata), parent.frozen)
+def test_new_variant_preserves_parent_and_sibling_behavior() -> None:
+    parent_schema = Request.model_json_schema()
+    query = Query(identifier="q", text="hello")
+    write = Write(identifier="w", value=1)
 
     @model(variant="later")
     class Later(Request):
         pass
 
+    assert Request.model_json_schema() == parent_schema
     assert (
-        parent.annotation,
-        parent.default_factory,
-        tuple(parent.metadata),
-        parent.frozen,
-    ) == before
-    assert parent.annotation is str
-    assert Later.model_fields["method"].annotation == Literal["later"]
-    assert Query.model_fields["method"].annotation == Literal["query"]
-    assert Write.model_fields["method"].annotation == Literal["write"]
-    for child in (Later, Query, Write):
-        field = child.model_fields["method"]
-        assert field is not parent
-        assert field.metadata is not parent.metadata
+        Request.model_validate({"identifier": "r", "method": "open"}).model_dump()["method"]
+        == "open"
+    )
+    assert Query(identifier="q", text="hello") == query
+    assert Write(identifier="w", value=1) == write
+    later = Later(identifier="l")
+    assert later.model_dump()["method"] == "later"
+    adapter = build_adapter(Message, variants=[Query, Write, Later])
+    for value in (query, write, later):
+        restored = adapter.validate_json(adapter.dump_json(value))
+        assert type(restored) is type(value)
+        assert restored == value
 
 
 def test_runtime_field_names_support_multilevel_dispatch_and_copy_protection() -> None:

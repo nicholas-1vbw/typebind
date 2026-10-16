@@ -220,11 +220,15 @@ uv run --locked poe benchmark
 ```
 
 `check` runs Ruff, strict Pyright, pytest, all runnable examples, a wheel/sdist build,
-and artifact verification. Tests execute the README quick start and guide snippets.
-The installed-plugin test builds the real example packages and checks discovery,
-nested round trips and strict typing against installed wheels. The native build
-creates a wheel from the sdist; artifact checks verify metadata, MIT, `py.typed`,
-source contents, clean-environment execution and strict typing outside the checkout.
+and artifact verification. Runnable examples in `examples/` are the executable
+usage references; README and guide prose are reviewed rather than parsed as tests.
+The installed-plugin test runs the discovery example against real installed
+plugin wheels, covering entry points, behavior assembly, nested round trips and
+cross-package typing. Generic wheel smoke checks belong to artifact verification.
+The native build creates a wheel from the sdist; artifact checks verify metadata, MIT, `py.typed`,
+source contents, dependency installation from wheel metadata, and strict typing
+outside the checkout. The lockfile constrains dependency versions; it does not
+preinstall packages that a wheel failed to declare.
 
 [CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps for Python 3.12–3.15 on Linux, macOS and Windows.
 Each job passes its Python version to `setup-uv`, which sets `UV_PYTHON` and
