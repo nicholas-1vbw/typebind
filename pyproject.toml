@@ -36,7 +36,7 @@ build-constraint-dependencies = ["uv_build==0.13.0"]
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*" }, { file = "README.md" }, { file = "LICENSE" }]
 
 [tool.uv.build-backend]
-source-include = ["tests/**", "examples/**", "benchmarks/**", "scripts/**", "docs/**", "uv.lock", ".python-version"]
+source-include = ["tests/**", "examples/**", "benchmarks/**", "scripts/**", "docs/**", "CONTRIBUTING.md", "SECURITY.md", "uv.lock", ".python-version"]
 
 [dependency-groups]
 dev = [
@@ -50,6 +50,8 @@ dev = [
     "typebind-example-core",
     "typebind-example-extra",
     "packaging>=25",
+    "pip-audit>=2.10.1",
+    "zizmor>=1.31.1",
 ]
 
 [tool.uv.sources]
@@ -108,6 +110,12 @@ executor = "simple"
 
 [tool.poe.tasks.check-dist]
 cmd = "python scripts/check_dist.py"
+
+[tool.poe.tasks.workflow-security]
+cmd = "zizmor --offline --strict-collection .github/workflows"
+
+[tool.poe.tasks.audit]
+cmd = "python scripts/audit_dependencies.py"
 
 [tool.ruff]
 line-length = 100
