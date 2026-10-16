@@ -66,6 +66,137 @@ query = Query(identifier="q", sequence=1, expression="hello")
 # Static types: query.kind is Literal["request"], query.method is Literal["query"].
 ```
 
+## Decorator declarations
+
+The explicit generic form above remains available and provides static tag types.
+The alternative decorator form generates the discriminator fields at class
+creation time. Additional fields, methods, validators and model configuration
+belong in the ordinary class body:
+
+```python
+from typebind import model
+
+
+@model(tag="kind")
+class DecoratedMessage(IdentityDiscriminatedModel):
+    identifier: str
+
+
+@model(tag="method", variant="request")
+class DecoratedRequest(DecoratedMessage):
+    sequence: int = 0
+
+
+@model(variant="query")
+class DecoratedQuery(DecoratedRequest):
+    expression: str
+
+
+@model(variant="write")
+class DecoratedWrite(DecoratedRequest):
+    value: int
+
+
+decorated = DecoratedQuery(identifier="q", expression="hello")
+decorated_binding = bind_variants([DecoratedQuery, DecoratedWrite])
+
+
+class DecoratedEnvelope(BaseModel):
+    requests: list[Annotated[DecoratedRequest, decorated_binding]]
+
+
+decorated_envelope = DecoratedEnvelope(requests=[decorated])
+restored_decorated = DecoratedEnvelope.model_validate_json(
+    decorated_envelope.model_dump_json(exclude_unset=True)
+)
+assert type(restored_decorated.requests[0]) is DecoratedQuery
+assert restored_decorated == decorated_envelope
+```
+
+`@model(tag="method", variant="request")` binds the inherited open discriminator
+(`kind`) to `Literal["request"]` and introduces the next open string field
+(`method`). The arguments are keyword-only: `tag` names a field and `variant`
+supplies a value for the inherited field, never for the new field. At least one
+is required; `@model()` is an error. A root family uses only `tag=`, a leaf uses
+only `variant=`, and an intermediate family supplies both in one call.
+It cannot bind multiple levels or bypass intermediate fields. A root without an
+open parent discriminator rejects `variant=`; existing field/attribute names
+cannot be reused by `@model`. Field names must be non-empty strings without a
+leading underscore. Python keywords and non-identifier names such as `"class"`
+and `"request-type"` are allowed; Pydantic owns the remaining field constraints.
+
+Decorators preserve the static input class type. Pyright checks inherited and
+local payload fields, constructor arguments and methods, including wrong/missing
+values. It does **not** synthesize `kind`/`method` attributes, tag constructor
+arguments, generic parameters or a tag-narrowable union. Accessing an injected
+tag attribute is a static error; use model dumps for runtime data, or choose the
+explicit generic declaration when application code needs typed tag access.
+`@model` does not widen the entire model to `Any`. No `.pyi` files
+are generated and no `create_family` API is exposed.
+
+The static limitation applies to constructor keywords as well as attribute
+access. For example, this call is accepted and validated at runtime, but strict
+Pyright reports the injected `kind` and `method` keywords:
+
+```python
+explicit_decorated = DecoratedQuery(
+    identifier="q", expression="hello", kind="request", method="query"
+)
+assert explicit_decorated == decorated
+```
+
+Omit tags when constructing a decorated class in statically checked code. Incoming
+records can contain tags: use the normal `model_validate` / `model_validate_json`
+APIs. Incorrect tag values are rejected, whether supplied to a constructor or
+through validation. Explicit generic declarations retain statically typed tag
+attributes and constructor arguments.
+
+Internally, `@model` uses Pydantic's `create_model(__base__=original)` to
+return an extended subclass. The original class remains in its MRO, preserving
+payload validators, methods and zero-argument `super()`. When both arguments are
+supplied, it builds both fields in a single extension. Class names, modules and docstrings are
+preserved, but a decorator does not preserve the undecorated class object's
+identity. Other decorators that register classes should run **after** typebind's
+final decorator (appear above it). Each decoration adds one class; MRO length grows
+linearly with the number of decorated declarations. `__subclasses__()` can expose
+both original and decorated classes. Originals may be untagged or still have an
+open discriminator, so raw subclass enumeration is not a variant catalog. Entry
+points should export the final decorated class.
+
+Class and schema construction have a declaration-time cost, usually paid during
+module import. Classes declared inside functions incur that cost whenever the
+function executes the declaration. This is separate from instance construction,
+serialization and behavior dispatch; no fixed percentage overhead is promised.
+
+For recursive payload fields, use `Self`, for example `children: list[Self]`.
+A class-name self-reference resolved during the original class body points to
+that original class, not its decorated replacement; nested values then validate
+as the undecorated class. This is not a supported recursive declaration form for
+decorators. Explicit generics and ordinary Pydantic unions remain available when
+that distinction matters. Custom class-construction side effects may run again
+for the native generated subclass; typebind adds no custom metaclass.
+
+The generated fields are the single source of discriminator names and Literal
+values. Field metadata only marks the declaration style, allowing the original
+subclass to exist before decoration. It contains no copied tag names/values.
+An accidentally undecorated subclass retains an open discriminator and is
+rejected as a leaf at adapter/behavior assembly. Explicit generic declarations
+keep their earlier declaration-time diagnostics. Introducing another level
+requires binding the inherited discriminator first.
+
+Both forms share native default compilation, duplicate checks, serialization
+and export policy. Decorated types work with the same `build_adapter`,
+`bind_variants`, entry points, `select_variants`, `Implementation[Model]` and
+`assemble` APIs. Publish the final decorated class via an entry point. Reflection
+and class generation happen during declaration/assembly, never construction or
+`adapt`. Use `DiscriminatedModel` instead of the identity base above for native
+unset behavior without an identity-marking callback.
+
+Forms can coexist: a decorated family can extend a bound explicit parent such as
+`Message[Literal["request"]]`, and an explicit generic family can extend a bound
+decorated leaf. An unbound explicit generic must first be specialized with native
+`[Literal[...]]`; decorators do not replace Pydantic's generic specialization.
+
 ## Specialized model aliases
 
 When a subtype only selects a tag and adds no fields or behavior, an ordinary
@@ -175,12 +306,12 @@ an explicit parameter under strict checking. Do not use `Request[str]` to mean
 ## Declaration rules and ownership
 
 - Pydantic owns `__class_getitem__`, generic field substitution, and specialization
-  caching. This package does not override subscription, call `create_model`,
-  mutate `model_fields`, or rebuild models to supply defaults. There is no custom
+  caching for explicit declarations. Decorators use native `create_model` as
+  described above. This package does not override subscription, mutate `model_fields`, or rebuild models to supply defaults. There is no custom
   `__init_subclass__`; the Pydantic `__pydantic_init_subclass__` hook inspects the
   completed fields and validates the declaration. It stores no per-class tag
   values, discriminator names, or inheritance paths.
-- Each family declares one `str`-bound type parameter as its outgoing discriminator
+- Each explicit generic family declares one `str`-bound type parameter as its outgoing discriminator
   field. Independent roots share only the mechanism. A branch can introduce a new
   type parameter and discriminator for the next level. More than one new tag
   field at the same level is rejected; inherited fixed tag fields do not count.
@@ -388,6 +519,8 @@ compiler options or custom generic-class creation are used. The supported Pydant
 `pyproject.toml`. Before widening that range or upgrading the resolved Pydantic /
 pydantic-core versions, verify these compatibility boundaries:
 
+- Native `create_model` preserves decorated payload fields, validators, `Self`,
+  schema rebuilds and inheritance; strict Pyright preserves business-field types.
 - Generic metadata and specialized fields still identify families and resolve
   Literal tags, including type aliases.
 - Core-schema generation still replaces the tag factory with native defaults and
@@ -412,8 +545,9 @@ Run the existing model regression tests and the full `poe check` suite against
 candidate dependency versions. The version upper bound limits the supported
 range; it does not replace these compatibility checks.
 
-Each family has one discriminator type parameter. Additional payload type
-parameters, refinement of an open family without selecting its tag, discriminator
+Each explicit family has one discriminator type parameter; decorated families
+have a runtime string field instead. Additional payload type parameters,
+discriminator
 aliases, and multiple DiscriminatedModel parents remain outside this package's
 contract. These are current implementation limitations, not general requirements of Pydantic.
 Custom constructors and arbitrary custom schema transformations are outside the

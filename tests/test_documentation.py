@@ -28,6 +28,7 @@ def test_readme_examples(tmp_path: Path) -> None:
     execute(blocks[0], tmp_path)
     (tmp_path / "commands.py").write_text((ROOT / "examples/commands.py").read_text())
     execute(blocks[1], tmp_path)
+    execute(blocks[2], tmp_path)
 
 
 def test_guide_examples(tmp_path: Path) -> None:

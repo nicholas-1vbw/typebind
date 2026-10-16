@@ -162,6 +162,9 @@ assert_type(runtime.adapt(value, Describable), Describable)
 assert_type(runtime.adapt(value, Executable).execute(), str)
 """
     )
+    decorated_consumer = tmp_path / "decorators.py"
+    decorated_consumer.write_text((root / "examples/decorators.py").read_text())
+    run(str(python), str(decorated_consumer))
     config = tmp_path / "pyrightconfig.json"
 
     # The documented discovery consumer must work solely with installed distributions.
@@ -170,6 +173,6 @@ assert_type(runtime.adapt(value, Executable).execute(), str)
     run(str(python), str(example))
     config.write_text(
         '{"typeCheckingMode":"strict","pythonVersion":"3.12",'
-        '"include":["typed_consumer.py","discovery.py"]}'
+        '"include":["typed_consumer.py","discovery.py","decorators.py"]}'
     )
     run(sys.executable, "-m", "pyright", "--project", str(config), "--pythonpath", str(python))
