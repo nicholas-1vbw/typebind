@@ -1,5 +1,6 @@
 """Exercise declarations, dispatch, isolation, and serialization boundaries."""
 
+from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Annotated, Any, Literal, Self, assert_type, cast, get_type_hints
@@ -292,6 +293,35 @@ def test_invalid_variant_inputs_report_the_value(value: object) -> None:
     assert repr(value) in str(error.value)
 
 
+@pytest.mark.parametrize("binding", [False, True], ids=["adapter", "binding"])
+def test_abstract_tagged_variants_are_rejected(binding: bool) -> None:
+    class AbstractQuery(Request[Literal["abstract"]], ABC):
+        @abstractmethod
+        def execute(self) -> str: ...
+
+    with pytest.raises(TypeError, match="AbstractQuery.*tagged leaf model"):
+        if binding:
+            bind_variants([AbstractQuery])
+        else:
+            build_adapter(Message[Any], variants=[AbstractQuery])
+
+    class ConcreteQuery(AbstractQuery):
+        def execute(self) -> str:
+            return self.identifier
+
+    annotation = Annotated[Message[Any], bind_variants([ConcreteQuery])]
+    adapter = (
+        TypeAdapter[Message[Any]](annotation)
+        if binding
+        else build_adapter(Message[Any], variants=[ConcreteQuery])
+    )
+    result = adapter.validate_python(
+        {"kind": "request", "method": "abstract", "identifier": "q", "sequence": 1}
+    )
+    assert isinstance(result, ConcreteQuery)
+    assert result.execute() == "q"
+
+
 def test_variant_bindings_are_explicit_independent_snapshots() -> None:
     before = Message.model_json_schema()
     variants: list[type[DiscriminatedModel]] = [Query]
@@ -549,6 +579,42 @@ def test_conditional_tag_exclusion_is_rejected_at_declaration() -> None:
         assert issubclass(HiddenTag, DiscriminatedModel)
     assert "HiddenTag.kind:" in str(error.value)
     assert "Unsupported settings: exclude_if" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "setting, value",
+    [
+        ("alias", "k"),
+        ("validation_alias", "k"),
+        ("serialization_alias", "k"),
+        ("exclude", True),
+        pytest.param(
+            "exclude_if",
+            bool,
+            marks=pytest.mark.skipif(
+                not hasattr(Field(), "exclude_if"), reason="Requires Pydantic's exclude_if"
+            ),
+        ),
+    ],
+)
+def test_specialization_preserves_tag_field_restrictions(setting: str, value: Any) -> None:
+    options = {setting: value}
+
+    class Native[Tag: str](BaseModel):
+        kind: Tag
+
+    native = Native[Annotated[Literal["hidden"], Field(**options)]]
+    if getattr(native.model_fields["kind"], setting) is None:
+        # Older Pydantic releases ignore these settings in generic type arguments.
+        # They remain safe only if tags are still exported and routable.
+        leaf = Message[Annotated[Literal["hidden"], Field(**options)]]
+        sample = leaf(identifier="q")
+        adapter = build_adapter(Message[Any], variants=[leaf])
+        assert sample.model_dump(by_alias=True) == {"kind": "hidden", "identifier": "q"}
+        assert adapter.validate_json(adapter.dump_json(sample, by_alias=True)) == sample
+        return
+    with pytest.raises(TypeError, match=f"Unsupported settings: .*{setting}"):
+        Message[Annotated[Literal["hidden"], Field(**options)]]
 
 
 def test_tag_field_is_the_single_source_of_the_discriminator() -> None:

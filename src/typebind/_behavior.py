@@ -45,6 +45,20 @@ def _implementation_class(value: object) -> type[Implementation[Any]]:
     return cast(type[Implementation[Any]], value)
 
 
+def _substitute_argument(argument: object, substitutions: dict[TypeVar, object]) -> object:
+    """Bind model parameters through native Pydantic specialization at assembly time."""
+    if isinstance(argument, TypeVar):
+        return substitutions.get(argument, argument)
+    if isinstance(argument, type) and issubclass(argument, DiscriminatedModel):
+        parameters = argument.__pydantic_generic_metadata__["parameters"]
+        resolved = tuple(substitutions.get(parameter, parameter) for parameter in parameters)
+        if resolved != parameters:
+            # Pydantic models are classes, not typing aliases. Let their native
+            # specialization substitute fields and preserve cached class identity.
+            return cast(Any, argument)[resolved]
+    return cast(object, argument)
+
+
 def _implementation_model(implementation: type[Implementation[Any]]) -> type[DiscriminatedModel]:
     """Resolve native generic bases, including type-variable forwarding through mixins."""
     targets: set[type[DiscriminatedModel]] = set()
@@ -54,10 +68,7 @@ def _implementation_model(implementation: type[Implementation[Any]]) -> type[Dis
             origin: object = get_origin(base) or base
             if not isinstance(origin, type):
                 continue
-            arguments = tuple(
-                substitutions.get(arg, arg) if isinstance(arg, TypeVar) else arg
-                for arg in get_args(base)
-            )
+            arguments = tuple(_substitute_argument(arg, substitutions) for arg in get_args(base))
             if origin is Implementation:
                 if len(arguments) != 1:
                     raise TypeError(
@@ -68,6 +79,11 @@ def _implementation_model(implementation: type[Implementation[Any]]) -> type[Dis
             elif issubclass(origin, Implementation):
                 parent = cast(type[Implementation[Any]], origin)
                 parameters = cast(tuple[TypeVar, ...], getattr(parent, "__parameters__", ()))
+                if len(arguments) != len(parameters):
+                    raise TypeError(
+                        f"{_name(implementation)}: expected explicit type arguments "
+                        f"for {_name(parent)}"
+                    )
                 visit(parent, dict(zip(parameters, arguments, strict=True)))
 
     visit(implementation, {})

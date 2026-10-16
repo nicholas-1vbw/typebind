@@ -1,8 +1,9 @@
 """Behavior assembly validates declarations once and binds ordinary objects."""
 
+import sys
 from abc import abstractmethod
 from importlib import metadata
-from typing import Annotated, Any, Literal, Protocol, cast
+from typing import Annotated, Any, Literal, Protocol, assert_type, cast
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
@@ -159,6 +160,69 @@ def test_generic_forwarding_and_inherited_implementation() -> None:
     )
 
 
+@pytest.mark.parametrize("through_middle", [False, True])
+def test_nested_model_type_argument_forwarding(through_middle: bool) -> None:
+    class Shared[K: str](Implementation[Message[K]], Describable):
+        def describe(self) -> str:
+            return self.model.identifier
+
+    class Direct(Shared[Literal["nested"]]):
+        pass
+
+    class Middle[K: str](Shared[K]):
+        pass
+
+    class Forwarded(Middle[Literal["nested"]]):
+        pass
+
+    class Inherited(Forwarded):
+        pass
+
+    leaf = Message[Literal["nested"]]
+    sample = leaf(identifier="nested")
+    assert_type(Direct(sample).model, Message[Literal["nested"]])
+    assert_type(Inherited(sample).model, Message[Literal["nested"]])
+    implementation = Inherited if through_middle else Direct
+    runtime = assemble(
+        variants=[leaf], implementations=[implementation], required_interfaces=[Describable]
+    )
+    view = runtime.adapt(sample, Describable)
+    assert type(view) is implementation
+    assert view.model is sample
+    assert view.describe() == "nested"
+
+
+def test_nested_model_argument_through_whole_model_forwarding() -> None:
+    class Whole[T: DiscriminatedModel](Implementation[T]):
+        pass
+
+    class Shared[K: str](Whole[Request[K]], Describable):
+        def describe(self) -> str:
+            return f"{self.model.kind}/{self.model.method}"
+
+    class Concrete(Shared[Literal["nested"]]):
+        pass
+
+    leaf = Request[Literal["nested"]]
+    sample = leaf(identifier="q")
+    assert_type(Concrete(sample).model, Request[Literal["nested"]])
+    runtime = assemble(
+        variants=[leaf], implementations=[Concrete], required_interfaces=[Describable]
+    )
+    view = runtime.adapt(sample, Describable)
+    assert view.model is sample
+    assert view.describe() == "request/nested"
+
+    class Open(Shared[str]):
+        pass
+
+    with pytest.raises(TypeError, match="expected a concrete model"):
+        assemble(variants=[leaf], implementations=[Open])
+
+    with pytest.raises(TypeError, match="expected a concrete model"):
+        assemble(variants=[leaf], implementations=[Shared])
+
+
 def test_no_reflection_discovery_or_validation_in_hot_path(monkeypatch: pytest.MonkeyPatch) -> None:
     runtime = assemble(
         variants=[Query], implementations=[QueryObject], required_interfaces=[Describable]
@@ -218,6 +282,56 @@ def test_unspecialized_implementation_is_rejected(bare: type[object]) -> None:
     with pytest.raises(TypeError, match=r"Implementation\[") as error:
         assemble(variants=[], implementations=[cast(Any, bare)])
     assert f"{bare.__module__}.{bare.__qualname__}" in str(error.value)
+
+
+def test_unspecialized_intermediate_implementation_is_rejected() -> None:
+    class Shared[T: DiscriminatedModel](Implementation[T]):
+        pass
+
+    # Deliberately omit the generic arguments, as an unchecked plugin may do.
+    bare = type("Unparameterized", (Shared,), {})
+    with pytest.raises(TypeError, match="expected explicit type arguments for .*Shared") as error:
+        assemble(variants=[Query], implementations=[bare])
+    assert "Unparameterized" in str(error.value)
+    assert (
+        f"Behavior implementation: {bare.__module__}.{bare.__qualname__}" in error.value.__notes__
+    )
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 13), reason="Native type parameter defaults require 3.13"
+)
+def test_implementation_type_parameter_defaults() -> None:
+    namespace: dict[str, Any] = {
+        "__name__": __name__,
+        "DiscriminatedModel": DiscriminatedModel,
+        "Implementation": Implementation,
+        "Query": Query,
+        "Describable": Describable,
+    }
+    # Keep the test module importable on Python 3.12.
+    exec(
+        """
+class Shared[T: DiscriminatedModel = Query](Implementation[T]):
+    pass
+class Bare(Shared):
+    pass
+class Explicit(Shared[()], Describable):
+    def describe(self) -> str:
+        return self.model.expression
+""",
+        namespace,
+    )
+    with pytest.raises(TypeError, match="Bare.*expected explicit type arguments for .*Shared"):
+        assemble(variants=[Query], implementations=[namespace["Bare"]])
+
+    runtime = assemble(
+        variants=[Query], implementations=[namespace["Explicit"]], required_interfaces=[Describable]
+    )
+    query = Query(identifier="q", expression="default")
+    view = runtime.adapt(query, Describable)
+    assert view.model is query
+    assert view.describe() == "default"
 
 
 def test_abstract_and_invalid_declarations() -> None:
