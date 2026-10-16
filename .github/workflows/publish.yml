@@ -45,8 +45,6 @@ jobs:
       - name: Verify upload candidate, version and main ancestry
         id: release
         if: github.event_name == 'push' || inputs.target == 'testpypi'
-        env:
-          RELEASE_REF_PROTECTED: ${{ github.ref_protected }}
         run: uv run --no-sync python scripts/check_release.py
       - name: Build wheel and sdist
         run: uv run --no-sync poe build --out-dir dist/release
@@ -117,7 +115,7 @@ jobs:
 
   pypi:
     name: Upload verified artifacts to PyPI
-    if: github.event_name == 'push' && github.ref_type == 'tag' && github.ref_protected
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
     concurrency:

@@ -8,7 +8,7 @@ checks that it matches the configured repository, workflow and environment.
 
 The [Publish workflow](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/publish.yml)
 starts production automatically when a `v*` tag is pushed. It runs full checks,
-verifies the protected tag and version, builds distributions, waits for the
+verifies the tag, version and main ancestry, builds distributions, waits for the
 configured `pypi` approval, uploads to PyPI, verifies installation, then creates
 GitHub Release notes and attaches the same distributions. Approval is enforced
 by GitHub environment settings, not by the presence of `environment` in YAML.
@@ -105,9 +105,11 @@ publishers and environments are not prerequisites for production publishing.
    and prohibit updates/deletion. Keep the creation exception separate from the
    update/deletion rules so a creation bypass does not also allow moving a release
    tag. Review any bypass roles; repository write access should not automatically
-   grant release authority. The production guard also requires GitHub's
-   `ref_protected` flag. This detects missing protection, not whether the configured
-   rules are strong enough; inspect the active rules and bypass list yourself.
+   grant release authority. GitHub rulesets enforce tag protection; the workflow
+   does not infer it from `github.ref_protected`, which has been reported false
+   even for protected tags. Inspect the active rules and bypass list before
+   enabling publication. The upload environment separately restricts deployment
+   to version tags and requires approval.
    Public repositories support these rules on Free;
    private repository rulesets require Pro, Team or Enterprise.
 7. Under **Settings → Actions → General**, use read-only default workflow
@@ -314,6 +316,7 @@ not a historical secret audit and does not change repository visibility.
 - [PyPA publishing guide](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)
 - [Creating a project with Trusted Publishing](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
 - [GitHub environment protection availability](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
+- [Reported tag `ref_protected` behavior](https://github.com/rcwbr/GitHub-ref_protected-false-for-tags)
 - [GitHub ruleset availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
 - [GitHub CLI release creation](https://cli.github.com/manual/gh_release_create)
 - [GitHub workflow trigger behavior](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)

@@ -22,8 +22,6 @@ def main() -> None:
 
     event = os.environ["GITHUB_EVENT_NAME"]
     if event == "push":
-        if os.environ.get("RELEASE_REF_PROTECTED") != "true":
-            raise ValueError("Production releases require a protected version tag")
         expected_ref = f"refs/tags/v{project['version']}"
         if ref != expected_ref:
             raise ValueError(f"Production requires the version tag {expected_ref}")
