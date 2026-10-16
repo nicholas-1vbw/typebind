@@ -50,6 +50,10 @@ family interface. One implementation can implement multiple interfaces, even
 when those interfaces bind to different ancestor families. Native generic
 forwarding through intermediate implementation bases is supported; there must
 ultimately be one concrete model target. Models do not inherit these interfaces.
+This includes forwarding a tag parameter inside a model: a base such as
+`Shared[K: str](Implementation[Message[K]])` specialized as
+`Shared[Literal["query"]]` targets `Message[Literal["query"]]`. Assembly uses
+Pydantic's native model specialization; the target retains its exact class identity.
 
 Assembly resolves the `model` property's return annotation with `get_type_hints`.
 With `from __future__ import annotations`, a family defined only inside a function

@@ -3,7 +3,7 @@
 import sys
 from abc import abstractmethod
 from importlib import metadata
-from typing import Annotated, Any, Literal, Protocol, cast
+from typing import Annotated, Any, Literal, Protocol, assert_type, cast
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
@@ -158,6 +158,69 @@ def test_generic_forwarding_and_inherited_implementation() -> None:
         runtime.adapt(Query(identifier="q", expression="forwarded"), Describable).describe()
         == "forwarded"
     )
+
+
+@pytest.mark.parametrize("through_middle", [False, True])
+def test_nested_model_type_argument_forwarding(through_middle: bool) -> None:
+    class Shared[K: str](Implementation[Message[K]], Describable):
+        def describe(self) -> str:
+            return self.model.identifier
+
+    class Direct(Shared[Literal["nested"]]):
+        pass
+
+    class Middle[K: str](Shared[K]):
+        pass
+
+    class Forwarded(Middle[Literal["nested"]]):
+        pass
+
+    class Inherited(Forwarded):
+        pass
+
+    leaf = Message[Literal["nested"]]
+    sample = leaf(identifier="nested")
+    assert_type(Direct(sample).model, Message[Literal["nested"]])
+    assert_type(Inherited(sample).model, Message[Literal["nested"]])
+    implementation = Inherited if through_middle else Direct
+    runtime = assemble(
+        variants=[leaf], implementations=[implementation], required_interfaces=[Describable]
+    )
+    view = runtime.adapt(sample, Describable)
+    assert type(view) is implementation
+    assert view.model is sample
+    assert view.describe() == "nested"
+
+
+def test_nested_model_argument_through_whole_model_forwarding() -> None:
+    class Whole[T: DiscriminatedModel](Implementation[T]):
+        pass
+
+    class Shared[K: str](Whole[Request[K]], Describable):
+        def describe(self) -> str:
+            return f"{self.model.kind}/{self.model.method}"
+
+    class Concrete(Shared[Literal["nested"]]):
+        pass
+
+    leaf = Request[Literal["nested"]]
+    sample = leaf(identifier="q")
+    assert_type(Concrete(sample).model, Request[Literal["nested"]])
+    runtime = assemble(
+        variants=[leaf], implementations=[Concrete], required_interfaces=[Describable]
+    )
+    view = runtime.adapt(sample, Describable)
+    assert view.model is sample
+    assert view.describe() == "request/nested"
+
+    class Open(Shared[str]):
+        pass
+
+    with pytest.raises(TypeError, match="expected a concrete model"):
+        assemble(variants=[leaf], implementations=[Open])
+
+    with pytest.raises(TypeError, match="expected a concrete model"):
+        assemble(variants=[leaf], implementations=[Shared])
 
 
 def test_no_reflection_discovery_or_validation_in_hot_path(monkeypatch: pytest.MonkeyPatch) -> None:
