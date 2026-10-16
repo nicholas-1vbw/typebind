@@ -224,15 +224,16 @@ and artifact verification. Tests execute the README quick start and guide snippe
 The installed-plugin test builds the real example packages and checks discovery,
 nested round trips and strict typing against installed wheels. The native build
 creates a wheel from the sdist; artifact checks verify metadata, MIT, `py.typed`,
-source contents, and clean-environment execution outside the checkout.
+source contents, clean-environment execution and strict typing outside the checkout.
 
 [CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps for Python 3.12–3.15 on Linux, macOS and Windows.
 Each job passes its Python version to `setup-uv`, which sets `UV_PYTHON` and
 includes the version in its cache key. The full matrix runs on pull requests,
-main pushes, and manual dispatch; ordinary branch pushes do not trigger a second run. It synchronizes locked dependencies once,
+main pushes, manual dispatch, and the release workflow; ordinary branch pushes do not trigger a second run. It synchronizes locked dependencies once,
 then uses `uv run --no-sync` for each step. Local development
 defaults to `.python-version`; set `UV_PYTHON=3.12` when running `poe check` to
 check the minimum supported version. Strict Pyright targets Python 3.12.
+A separate CI job validates GitHub workflow syntax with actionlint.
 Local `poe check` remains the aggregate entry point. `poe benchmark` runs model
 construction/JSON and behavior adaptation benchmarks; `poe benchmark-models` and
 `poe benchmark-behavior` run them separately. Model cases compare omitted and
@@ -251,17 +252,18 @@ checks do not imply that hosted CI has passed. Development tools and example
 packages are in the development dependency group; the library's runtime
 requirements remain separate. Update `uv.lock` when dependencies change.
 
-## Release preparation
+## Publishing
 
-CI only verifies; it does not publish. Before the first release, confirm the PyPI
-name and publishing permissions, run hosted CI, and configure a dedicated release
-workflow with [Trusted Publishing](https://docs.pypi.org/trusted-publishers/).
-A repository name does not reserve the PyPI project name.
+The manual [Publish workflow](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/publish.yml)
+uses Trusted Publishing without stored API tokens. Its default `check` target
+only verifies; `testpypi` uploads a rehearsal, and `pypi` verifies through TestPyPI
+before promoting the same built artifacts to PyPI. Uploads require a version tag
+on main and configured publishing environments. Ordinary CI never publishes.
 
-Set the version in `pyproject.toml`, update the lockfile, run `uv run --locked poe check`,
-and publish only the reviewed wheel and sdist for that version. Verify installation
-from the index in a clean consumer environment after publishing. See the
-[uv publishing guide](https://docs.astral.sh/uv/guides/package/).
+See the [release guide](https://github.com/nicholas-1vbw/typebind/blob/main/docs/releasing.md)
+for owner setup, approvals, commands, retry boundaries, and the review needed
+before a private repository or package becomes public. A repository name does
+not reserve the PyPI project name.
 
 ## License
 
