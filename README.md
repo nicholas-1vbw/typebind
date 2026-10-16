@@ -22,6 +22,48 @@ The supported Pydantic range and other runtime requirements are declared in
 Declare a family and its variants, then build an adapter for the variants you accept:
 
 ```python
+from typebind import DiscriminatedModel, build_adapter, model
+
+
+@model(tag="kind")
+class Message(DiscriminatedModel):
+    identifier: str
+
+
+@model(variant="query")
+class Query(Message):
+    expression: str
+
+
+@model(variant="ping")
+class Ping(Message):
+    pass
+
+
+adapter = build_adapter(Message, variants=(Query, Ping))
+query = Query(identifier="q", expression="hello")  # kind defaults to "query"
+wire = adapter.dump_json(query)
+assert adapter.validate_json(wire) == query
+assert type(adapter.validate_python({"kind": "ping", "identifier": "p"})) is Ping
+print(wire.decode())  # {"kind":"query","identifier":"q","expression":"hello"}
+```
+
+`build_adapter` returns a native Pydantic `TypeAdapter`. For nested model fields,
+use [`bind_variants`](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#consumer-types).
+Import public APIs from `typebind`; underscore-prefixed modules are internal.
+
+The [`@model` decorator](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#decorator-declarations)
+preserves static checking for declared fields such as `identifier` and `expression`.
+Generated tag attributes such as `kind` are runtime-only: Pyright does not see
+them or accept them as constructor keywords. Use explicit generics when your
+code needs statically typed `Literal` tags:
+
+<details>
+<summary>Explicit generics with statically typed tags</summary>
+
+This standalone example provides the same validation and JSON round trip:
+
+```python
 from typing import Any, Literal
 
 from typebind import DiscriminatedModel, build_adapter, tag_field
@@ -48,11 +90,11 @@ assert type(adapter.validate_python({"kind": "ping", "identifier": "p"})) is Pin
 print(wire.decode())  # {"kind":"query","identifier":"q","expression":"hello"}
 ```
 
-`build_adapter` returns a native Pydantic `TypeAdapter`. `Message[Any]` keeps
-common fields typed while allowing runtime-selected tags; concrete variants
-retain their `Literal` tags. For nested model fields, use
-[`bind_variants`](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#consumer-types).
-Import public APIs from `typebind`; underscore-prefixed modules are internal.
+`Message[Any]` keeps common fields typed while allowing runtime-selected tags;
+concrete variants retain their `Literal` tags. For example, `query.kind` has the
+static type `Literal["query"]`.
+
+</details>
 
 ## Usage notes
 
@@ -62,9 +104,6 @@ Import public APIs from `typebind`; underscore-prefixed modules are internal.
   `IdentityDiscriminatedModel` to retain omitted tags. Explicit tag exclusions and
   `exclude_defaults=True` can still remove them; see the
   [serialization contract](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#json-serialization-contract).
-- Explicit generics provide static tag types. The alternative
-  [`@model` decorator](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#decorator-declarations)
-  reduces declaration boilerplate, but generated tag attributes are runtime-only.
 - Strict Pyright is verified. Discriminator aliases, additional payload type
   parameters and multiple model-family parents are unsupported; see
   [typing and compatibility boundaries](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#current-boundaries).
