@@ -39,9 +39,8 @@ def plugin_wheels(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]
 
 @pytest.mark.integration
 @pytest.mark.timeout(120)
-@pytest.mark.parametrize("package_version", [None, "0.1.0.dev1", "0.1.0a1"])
 def test_installed_plugins_are_discovered_across_distributions(
-    tmp_path: Path, plugin_wheels: tuple[Path, Path], package_version: str | None
+    tmp_path: Path, plugin_wheels: tuple[Path, Path]
 ) -> None:
     uv = shutil.which("uv")
     assert uv is not None, "The repository's uv toolchain must be on PATH"
@@ -55,22 +54,7 @@ def test_installed_plugins_are_discovered_across_distributions(
     wheels.mkdir()
     first, second = plugin_wheels
     environment = tmp_path / "environment"
-    package_root = root
-    if package_version is not None:
-        # Build the actual library with a prerelease version; keep the source checkout intact.
-        package_root = tmp_path / "package"
-        package_root.mkdir()
-        shutil.copytree(
-            root / "src", package_root / "src", ignore=shutil.ignore_patterns("__pycache__")
-        )
-        for filename in ("README.md", "LICENSE"):
-            shutil.copy2(root / filename, package_root / filename)
-        metadata = (root / "pyproject.toml").read_text()
-        current_version = tomllib.loads(metadata)["project"]["version"]
-        (package_root / "pyproject.toml").write_text(
-            metadata.replace(f'version = "{current_version}"', f'version = "{package_version}"', 1)
-        )
-    run(uv, "build", "--no-sources", "--wheel", "--out-dir", str(wheels), cwd=package_root)
+    run(uv, "build", "--no-sources", "--wheel", "--out-dir", str(wheels), cwd=root)
     package_wheel = next(wheels.glob("typebind-*.whl"))
     run(uv, "venv", str(environment), "--python", sys.executable)
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
@@ -109,7 +93,7 @@ def test_installed_plugins_are_discovered_across_distributions(
         str(first),
         str(second),
     )
-    # Every candidate must install these exact checkout artifacts and import both plugins.
+    # Install these exact checkout artifacts and import both plugins.
     run(
         str(python),
         "-c",
@@ -134,12 +118,8 @@ assert distribution("typebind").version == sys.argv[4]
         str(package_wheel),
         str(first),
         str(second),
-        package_version
-        or tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"],
+        tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"],
     )
-    if package_version is not None:
-        # The code is identical: only the current-version case repeats full behavior and typing.
-        return
 
     # One installed consumer covers real entry points, cross-package types,
     # behavior assembly and nested JSON round trips. Generic wheel smoke checks

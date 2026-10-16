@@ -32,16 +32,17 @@ script demonstrates.
 
 The test task reports branch coverage and missing lines as diagnostics; there is
 no percentage gate. The `integration` marker selects the installed-distribution
-test independently. It builds the two plugin wheels once, then checks current,
-development and alpha library wheels. All three cases verify installation,
-version, exact local wheel origins and imports. Only the current-version case
-runs the discovery example against installed wheels, verifying real entry points,
+test independently. It builds the two plugin wheels and the current library wheel,
+then verifies installation, version, exact local wheel origins and imports.
+It runs the discovery example against installed wheels, verifying real entry points,
 behavior results, nested JSON round trips and cross-package Pyright inference.
 Generic model and decorator wheel checks belong to artifact verification.
 
 The build creates the wheel from the sdist. Artifact verification checks package
-metadata, MIT licensing, `py.typed`, source contents and isolated runtime/typing
-behavior. Installers follow wheel dependency metadata under lockfile-derived
+metadata with Twine, the packaged license and `py.typed`, and isolated runtime/typing
+behavior. The distribution directory must contain exactly one wheel and one sdist
+for the same release; use a clean output directory after changing versions.
+Installers follow wheel dependency metadata under lockfile-derived
 constraints; they do not preinstall undeclared dependencies. Isolated installs
 may access PyPI, so `poe check` is not an offline command. Runnable examples are
 usage acceptance checks; documentation prose is reviewed, not parsed by tests.
@@ -51,8 +52,10 @@ independently selected typebind release. Their dependency metadata declares
 package relationships without version constraints. Root uv source configuration
 selects the local examples during development; the integration test installs the
 library and plugin wheels built from this checkout and verifies their installation
-origins. The development and alpha cases change only the candidate version metadata.
-Changing the main package version does not require bumping the examples' own versions.
+origins. Changing the main package version does not require bumping the examples'
+own versions. Prerelease candidates use the same installation checks with their
+declared version; the release workflow verifies the actual candidate rather than
+creating additional synthetic development and alpha versions in each test run.
 
 To check the minimum supported Python on POSIX shells, run
 `UV_PYTHON=3.12 uv sync --locked`, then `uv run --no-sync poe check`.
