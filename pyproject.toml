@@ -49,6 +49,7 @@ dev = [
     "twine>=6.2",
     "typebind-example-core",
     "typebind-example-extra",
+    "packaging>=25",
 ]
 
 [tool.uv.sources]
