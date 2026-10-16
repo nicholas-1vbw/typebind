@@ -144,7 +144,17 @@ assert family_adapter.validate_json(wire) == query
 assert "kind" not in query.model_dump(exclude_unset=True)
 assert envelope_adapter.validate_json(envelope_adapter.dump_json(envelope)) == envelope
 
+native_query = NativeQuery(value=1)
+envelope_wire = envelope_adapter.dump_json(envelope)
+
 cases: dict[str, Callable[[], object]] = {
+    "copy_plain": lambda: query.model_copy(),
+    "copy_payload": lambda: query.model_copy(update={"value": 2}),
+    "native_unchecked_copy_plain": lambda: native_query.model_copy(),
+    "native_unchecked_copy_payload": lambda: native_query.model_copy(update={"value": 2}),
+    "family_dump_json": lambda: family_adapter.dump_json(query),
+    "nested_dump_json": lambda: envelope_adapter.dump_json(envelope),
+    "nested_validate_json": lambda: envelope_adapter.validate_json(envelope_wire),
     "single_omit": lambda: Event(value=1),
     "single_explicit": lambda: Event(kind="event", value=1),
     "multi_omit": lambda: Query(value=1),
@@ -230,7 +240,7 @@ print(
             "iterations": 5_000,
             "repeats": 7,
             "scope": (
-                "Warm model construction and JSON operations; "
+                "Warm model construction, copy and JSON operations; "
                 "excludes assembly, I/O and concurrency."
             ),
             "results": results,
