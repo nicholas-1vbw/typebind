@@ -52,7 +52,16 @@ def test_installed_plugins_are_discovered_across_distributions(tmp_path: Path) -
         str(constraints),
         cwd=root,
     )
-    run(uv, "pip", "install", "--python", str(python), "--constraint", str(constraints), str(package_wheel))
+    run(
+        uv,
+        "pip",
+        "install",
+        "--python",
+        str(python),
+        "--constraint",
+        str(constraints),
+        str(package_wheel),
+    )
     run(
         uv,
         "pip",

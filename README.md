@@ -220,7 +220,8 @@ uv run --locked poe benchmark
 ```
 
 `check` runs Ruff, strict Pyright, pytest, all runnable examples, a wheel/sdist build,
-and artifact verification. Tests execute the README quick start and guide snippets.
+and artifact verification. Runnable examples in `examples/` are the executable
+usage references; README and guide prose are reviewed rather than parsed as tests.
 The installed-plugin test builds the real example packages and checks discovery,
 nested round trips and strict typing against installed wheels. The native build
 creates a wheel from the sdist; artifact checks verify metadata, MIT, `py.typed`,
