@@ -1,7 +1,7 @@
 # Model families and serialization
 
-[Back to README](../README.md). Run `uv run --locked poe example-models` for a
-self-contained introduction. The snippets below build on each other in order.
+[Back to README](../README.md). See the [model example](../examples/README.md#models-and-manual-assembly)
+for a runnable introduction. The snippets below build on each other in order.
 
 ## Choosing export semantics
 
@@ -510,6 +510,8 @@ in each receiving process. Unchecked `model_construct()` is not deserialization
 and does not supply the validated automatic-tag guarantees.
 
 ## Current boundaries
+
+Strict Pyright is verified; PyCharm and Mypy are not.
 
 The declaration hook reads Pydantic's generic metadata to identify the originating
 family. Default generation uses the public core-schema hook and native

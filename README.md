@@ -1,8 +1,9 @@
 # typebind
 
-Pydantic model families with automatic discriminator tags, typed behavior adapters,
-and optional plugin discovery. Declare models with native generics and `Literal`;
-choose their variants explicitly, or load them from installed entry points.
+Build extensible Pydantic model families with automatic discriminator tags and
+statically typed fields. Bind behavior implementations to models without mixing
+them into the data classes. Select variants explicitly, or optionally discover
+models and implementations supplied by installed plugin packages.
 
 ## Install
 
@@ -13,20 +14,17 @@ has not been published to PyPI. From a local checkout:
 python -m pip install .
 ```
 
-Runtime requirements are declared in [pyproject.toml](https://github.com/nicholas-1vbw/typebind/blob/main/pyproject.toml). Development uses
-`uv.lock` and the exact uv version in `tool.uv.required-version`.
+The supported Pydantic range and other runtime requirements are declared in
+[pyproject.toml](https://github.com/nicholas-1vbw/typebind/blob/main/pyproject.toml).
 
-## Quick start: model families
+## Quick start
 
-This complete example selects its variants manually. Concrete constructors can
-omit fixed tags; incoming data routed through an adapter must contain them.
+Declare a family and its variants, then build an adapter for the variants you accept:
 
 ```python
-"""Declare tagged models, select variants manually, and round-trip JSON."""
-
 from typing import Any, Literal
 
-from typebind import DiscriminatedModel, IdentityDiscriminatedModel, build_adapter, tag_field
+from typebind import DiscriminatedModel, build_adapter, tag_field
 
 
 class Message[Kind: str](DiscriminatedModel):
@@ -45,181 +43,46 @@ class Ping(Message[Literal["ping"]]):
 adapter = build_adapter(Message[Any], variants=(Query, Ping))
 query = Query(identifier="q", expression="hello")  # kind defaults to "query"
 wire = adapter.dump_json(query)
-restored = adapter.validate_json(wire)
-assert type(restored) is Query
-assert restored == query
+assert adapter.validate_json(wire) == query
 assert type(adapter.validate_python({"kind": "ping", "identifier": "p"})) is Ping
-print(wire.decode())
-
-# Choose the policy at the family root. Native defaults remain unset.
-assert "kind" not in query.model_dump(exclude_unset=True)
-
-
-class IdentityMessage[Kind: str](IdentityDiscriminatedModel):
-    kind: Kind = tag_field()
-    identifier: str
-
-
-class IdentityQuery(IdentityMessage[Literal["query"]]):
-    expression: str
-
-
-identity_adapter = build_adapter(IdentityMessage[Any], variants=(IdentityQuery,))
-identity = IdentityQuery(identifier="q", expression="hello")
-identity_wire = identity_adapter.dump_json(identity, exclude_unset=True)
-assert identity_adapter.validate_json(identity_wire) == identity
-assert identity.model_dump() == query.model_dump()
+print(wire.decode())  # {"kind":"query","identifier":"q","expression":"hello"}
 ```
 
-`build_adapter` returns a native Pydantic `TypeAdapter`. For nested containers,
-use `Annotated[Family[Any], bind_variants(variants)]` as described in the
-[model guide](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md). `Family[Any]` keeps common fields typed while allowing
-runtime-selected tags; concrete models retain exact `Literal` tags.
+`build_adapter` returns a native Pydantic `TypeAdapter`. `Message[Any]` keeps
+common fields typed while allowing runtime-selected tags; concrete variants
+retain their `Literal` tags. For nested model fields, use
+[`bind_variants`](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#consumer-types).
+Import public APIs from `typebind`; underscore-prefixed modules are internal.
 
-## Serialization contract
+## Usage notes
 
-Use Pydantic JSON serialization and validation for persistence and messages:
-`adapter.dump_json()` / `adapter.validate_json()` for an assembled family, or
-`model_dump_json()` / `model_validate_json()` for a model with explicitly bound
-nested fields. Keep discriminator fields in the serialized data and configure
-the reader with the variants it accepts. Ordinary dumps retain tags.
-Choose a base class when declaring a family:
+- Constructors can omit fixed tags, but incoming data routed through an adapter
+  must contain them. Keep tags in persisted JSON and bind the reader's accepted variants.
+- Ordinary dumps retain tags. If you need `exclude_unset=True`, use
+  `IdentityDiscriminatedModel` to retain omitted tags. Explicit tag exclusions and
+  `exclude_defaults=True` can still remove them; see the
+  [serialization contract](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#json-serialization-contract).
+- Explicit generics provide static tag types. The alternative
+  [`@model` decorator](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#decorator-declarations)
+  reduces declaration boilerplate, but generated tag attributes are runtime-only.
+- Strict Pyright is verified. Discriminator aliases, additional payload type
+  parameters and multiple model-family parents are unsupported; see
+  [typing and compatibility boundaries](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#current-boundaries).
 
-| Base class | Omitted tag in `exclude_unset=True` | Runtime identity marking |
-| --- | --- | --- |
-| `DiscriminatedModel` | Omitted, like a native Pydantic default | None: no marker callback or policy branch |
-| `IdentityDiscriminatedModel` | Retained as an explicitly set identity field | One inherited public after-validator |
+## Documentation and examples
 
-Both support the same automatic defaults, generics, multilevel dispatch, discovery
-and behavior assembly. The `Identity` prefix means bound tags are treated as set
-identity fields even when the caller omits them; it does not change their values.
-Both bases allow matching explicit tags during validation, reject discriminator
-assignment, and reject bound discriminator keys in `model_copy(update=...)`, even
-for unchanged values. Other copy updates retain native unvalidated semantics; see
-[identity and copying](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#identity-and-copying).
-`exclude_defaults=True` and explicit tag exclusions can remove tags with either
-base; do not use those options for family interchange. When a storage SDK expects a dictionary,
-use `model_dump(mode="json")` (or `adapter.dump_python(mode="json")`).
-
-Pickle is not suitable for this persistence or interchange contract; pickle
-compatibility is not an acceptance requirement. Store data models, then reassemble
-behavior implementations in the receiving process. See the
-[serialization contract](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#json-serialization-contract)
-for scope and versioning boundaries.
-
-## Choose an example
-
-From a development checkout, `uv run --locked` synchronizes the locked environment
-before running each task:
-
-| Example | Command | What it demonstrates |
-| --- | --- | --- |
-| [Models](https://github.com/nicholas-1vbw/typebind/blob/main/examples/models.py) | `uv run --locked poe example-models` | Automatic tags, explicit variants, JSON round trips |
-| [Manual assembly](https://github.com/nicholas-1vbw/typebind/blob/main/examples/manual.py) | `uv run --locked poe example-manual` | One family, two variants, two interfaces, nested serialization and typed `adapt()` |
-| [Cross-package discovery](https://github.com/nicholas-1vbw/typebind/blob/main/examples/discovery.py) | `uv run --locked poe example-discovery` | Two installed distributions, native entry points, family/scope selection and behavior assembly |
-
-The manual example shares its declarations in [commands.py](https://github.com/nicholas-1vbw/typebind/blob/main/examples/commands.py) and
-passes tuples directly to `assemble`:
-
-```python
-from commands import (
-    Add,
-    AddObject,
-    Describable,
-    Executable,
-    Uppercase,
-    UppercaseObject,
-)
-from typebind import assemble
-
-variants = (Uppercase, Add)
-runtime = assemble(
-    variants=variants,
-    implementations=(UppercaseObject, AddObject),
-    required_interfaces=(Describable, Executable),
-)
-result = runtime.adapt(Add(identifier="a", left=20, right=22), Executable)
-assert result.execute() == "42"
-```
-
-Discovery is optional. It obtains the classes supplied to the same assembly
-functions; it is not required to declare models, bind variants, or call behaviors.
-The discovery example installs real [example packages](https://github.com/nicholas-1vbw/typebind/blob/main/examples/plugins) as development
-dependencies and fails when they are missing. These packages are not typebind
-runtime dependencies and are not shipped inside its wheel.
-
-Import public APIs from `typebind`. The `_models`, `_behavior`, and `_discovery`
-modules are internal implementation details.
-
-## Decorator declarations
-
-When application code does not need statically typed tag attributes, `@model`
-removes the discriminator field and type-parameter boilerplate:
-
-```python
-from typebind import IdentityDiscriminatedModel, model
-
-
-@model(tag="kind")
-class Message(IdentityDiscriminatedModel):
-    identifier: str
-
-
-@model(tag="method", variant="request")
-class Request(Message):
-    sequence: int = 0
-
-
-@model(variant="query")
-class Query(Request):
-    text: str
-
-
-query = Query(identifier="q", text="hello")
-assert query.model_dump(exclude_unset=True) == {
-    "identifier": "q",
-    "kind": "request",
-    "method": "query",
-    "text": "hello",
-}
-```
-
-Here `variant="request"` binds the parent's `kind`; `tag="method"` introduces this
-family's discriminator. Business fields and inheritance remain checked by strict
-Pyright. Generated tag attributes are runtime-only; use the explicit generic form
-when you need `Literal` inference or static narrowing by tags. Both forms use the
-same fields, defaults, discovery and adapters. No stubs or public class factory
-are required.
-
-Run `uv run --locked poe example-decorators` for the
-[complete example](https://github.com/nicholas-1vbw/typebind/blob/main/examples/decorators.py),
-including two variants, manual behavior assembly and nested JSON round trips.
-See [declaration details](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#decorator-declarations)
-for composition and recursive fields.
-
-## Guides and contracts
-
-- [Models](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md): multilevel discriminators, aliases, nested unions, duplicate tags and validation boundaries.
-- [Behaviors](https://github.com/nicholas-1vbw/typebind/blob/main/docs/behaviors.md): interface/family binding, manual assembly, coverage, conflicts and exact-type dispatch.
-- [Discovery](https://github.com/nicholas-1vbw/typebind/blob/main/docs/discovery.md): package layout, entry points, group/family relationships, scopes and local extras.
-
-Explicit generic families introduce one discriminator type parameter.
-Decorator families instead generate runtime-only tag fields; payload typing stays strict. Discriminator aliases,
-additional payload type parameters, and multiple model-family parents are not
-supported. Strict Pyright is verified; PyCharm and Mypy are not. Pydantic's
-supported minor series is intentionally bounded because declaration validation
-reads its generic metadata; see the [model boundaries](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#current-boundaries).
+- [Runnable examples](https://github.com/nicholas-1vbw/typebind/blob/main/examples/README.md): setup and commands for model families, manual behavior assembly, decorators and cross-package discovery.
+- [Models](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md): declarations, nested binding, serialization and copying.
+- [Behaviors](https://github.com/nicholas-1vbw/typebind/blob/main/docs/behaviors.md): typed interfaces, assembly and dispatch contracts.
+- [Discovery](https://github.com/nicholas-1vbw/typebind/blob/main/docs/discovery.md): package layout, entry points and scoped selection. Discovery is optional for all model and behavior APIs.
 
 ## Contributing
 
 See [Contributing](https://github.com/nicholas-1vbw/typebind/blob/main/CONTRIBUTING.md)
-for setup, checks, benchmarks and dependency maintenance. Report vulnerabilities
-through the [security policy](https://github.com/nicholas-1vbw/typebind/blob/main/SECURITY.md).
-
-## Publishing
-
-See [Releasing](https://github.com/nicholas-1vbw/typebind/blob/main/docs/releasing.md)
-for owner setup, optional TestPyPI rehearsals and approved tag-based PyPI releases.
+for development setup and checks, and
+[Releasing](https://github.com/nicholas-1vbw/typebind/blob/main/docs/releasing.md)
+for publishing. Report vulnerabilities through the
+[security policy](https://github.com/nicholas-1vbw/typebind/blob/main/SECURITY.md).
 
 ## License
 
