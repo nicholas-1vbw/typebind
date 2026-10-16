@@ -61,6 +61,15 @@ the ongoing CI validation. The full matrix runs on PRs, main pushes, manual
 checks and the release workflow. Ordinary branch pushes do not trigger CI.
 Each job syncs dependencies once and runs the Poe sub-tasks as separate steps.
 
+A separate Python 3.12 job checks the minimum runtime dependencies declared in
+`pyproject.toml`. It keeps the locked development tools, resolves runtime
+constraints with `uv pip compile --resolution lowest-direct`, and installs that
+combination before running strict typing, non-integration tests and all examples.
+Artifact verification consumes the same constraints through `check-dist --constraint`,
+so its isolated wheel installation also exercises the minimum dependencies.
+The installed-plugin integration tests remain in the locked Python matrix; their
+own isolated environments use lockfile constraints.
+
 For workflow changes, run actionlint (the version is declared in `ci.yml`) and:
 
 ```sh
@@ -137,10 +146,11 @@ uv run --no-sync poe check
 uv run --no-sync poe audit
 ```
 
-For Pydantic updates, update `pydantic` and `pydantic-core` together and follow the
-[compatibility checks](docs/models.md#current-boundaries) before widening the
-supported minor series. A passing locked run covers its resolved combination,
-not every version allowed by the package metadata.
+For Pydantic updates, update `pydantic` and let its exact dependency select
+`pydantic-core`; typebind does not impose another core version constraint.
+Follow the [compatibility checks](docs/models.md#current-boundaries) for dependency
+changes. The locked matrix and minimum-dependency job cover their actual resolved
+combinations, not every version allowed by the package metadata.
 
 `poe audit` exports all locked third-party runtime/development entries to a
 temporary native `pylock.toml`, then uses pip-audit's lock reader with strict

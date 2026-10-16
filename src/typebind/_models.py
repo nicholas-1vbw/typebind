@@ -330,7 +330,7 @@ class DiscriminatedModel(BaseModel):
                 ("validation_alias", field.validation_alias is not None),
                 ("serialization_alias", field.serialization_alias is not None),
                 ("exclude", bool(field.exclude)),
-                ("exclude_if", field.exclude_if is not None),
+                ("exclude_if", getattr(field, "exclude_if", None) is not None),
             )
             if invalid
         ]

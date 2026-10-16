@@ -32,9 +32,13 @@ def main() -> None:
     parser.add_argument(
         "--index-url", help="Install the expected wheel from this index, without cache"
     )
+    parser.add_argument(
+        "--constraint", type=Path, help="Use these runtime constraints instead of the lockfile"
+    )
     args = parser.parse_args()
     distribution_dir = Path(args.dist_dir).resolve()
     index_url: str | None = args.index_url
+    supplied_constraints: Path | None = args.constraint
     root = Path(__file__).resolve().parents[1]
     project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
     name, version = project["name"], project["version"]
@@ -67,18 +71,23 @@ def main() -> None:
         environment = temporary / "environment"
         run(uv, "venv", str(environment), "--python", sys.executable, cwd=temporary)
         python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        constraints = temporary / "runtime-constraints.txt"
-        run(
-            uv,
-            "export",
-            "--locked",
-            "--no-dev",
-            "--no-emit-project",
-            "--no-hashes",
-            "--output-file",
-            str(constraints),
-            cwd=root,
+        constraints = (
+            supplied_constraints.resolve()
+            if supplied_constraints is not None
+            else temporary / "runtime-constraints.txt"
         )
+        if supplied_constraints is None:
+            run(
+                uv,
+                "export",
+                "--locked",
+                "--no-dev",
+                "--no-emit-project",
+                "--no-hashes",
+                "--output-file",
+                str(constraints),
+                cwd=root,
+            )
         if index_url is None:
             candidate = str(wheel)
         else:

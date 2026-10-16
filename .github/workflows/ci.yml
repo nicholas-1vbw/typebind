@@ -61,3 +61,34 @@ jobs:
         run: uv run --no-sync poe build
       - name: Verify artifacts and isolated installation
         run: uv run --no-sync poe check-dist
+
+  minimum:
+    name: Check minimum dependencies (Python 3.12)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: Install Python
+        run: uv python install
+      - name: Sync locked development dependencies
+        run: uv sync --locked
+      - name: Resolve and install minimum runtime dependencies
+        run: |
+          uv pip compile pyproject.toml --resolution lowest-direct --output-file "$RUNNER_TEMP/minimum-constraints.txt"
+          uv pip install -r "$RUNNER_TEMP/minimum-constraints.txt"
+          uv pip check
+      - name: Run strict Pyright
+        run: uv run --no-sync poe typecheck
+      - name: Run library and downstream typing tests
+        run: uv run --no-sync pytest -m "not integration"
+      - name: Run examples
+        run: uv run --no-sync poe example
+      - name: Build wheel and sdist
+        run: uv run --no-sync poe build
+      - name: Verify artifacts with minimum dependencies
+        run: uv run --no-sync poe check-dist --constraint "$RUNNER_TEMP/minimum-constraints.txt"
