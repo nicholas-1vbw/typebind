@@ -9,22 +9,22 @@ behavior assembly and optional plugin discovery. API contracts live in the
 
 Use a repository checkout and the uv version specified by `tool.uv.required-version`
 in [pyproject.toml](../pyproject.toml). See [development setup](../CONTRIBUTING.md#set-up-and-run-checks)
-for uv installation. Run the commands below from the repository root;
-`uv run --locked` synchronizes the locked development environment before execution.
+for uv installation. Run `uv sync --locked` from the repository root to prepare
+the locked development environment, then run the commands below from that directory.
 Installing only `typebind` with pip does not install these scripts or their local
 plugin dependencies.
 
 | Example | Command | What it demonstrates |
 | --- | --- | --- |
-| [Models](models.py) | `uv run --locked poe example-models` | Automatic tags, explicit variants, JSON round trips and both export policies |
-| [Manual assembly](manual.py) | `uv run --locked poe example-manual` | One family, two variants, two interfaces, nested serialization and typed `adapt()` |
-| [Decorators](decorators.py) | `uv run --locked poe example-decorators` | Multilevel decorator declarations, typed payloads, behavior assembly and nested JSON round trips |
-| [Cross-package discovery](discovery.py) | `uv run --locked poe example-discovery` | Two installed distributions, entry points, family selection and behavior assembly |
+| [Models](models.py) | `uv run --no-sync poe example-models` | Automatic tags, explicit variants, JSON round trips and both export policies |
+| [Manual assembly](manual.py) | `uv run --no-sync poe example-manual` | One family, two variants, two interfaces, nested serialization and typed `adapt()` |
+| [Decorators](decorators.py) | `uv run --no-sync poe example-decorators` | Multilevel decorator declarations, typed payloads, behavior assembly and nested JSON round trips |
+| [Cross-package discovery](discovery.py) | `uv run --no-sync poe example-discovery` | Two installed distributions, entry points, family selection and behavior assembly |
 
 To run all four:
 
 ```sh
-uv run --locked poe example
+uv run --no-sync poe example
 ```
 
 The scripts assert their validation and round-trip results and print JSON or

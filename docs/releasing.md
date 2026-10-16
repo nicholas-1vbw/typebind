@@ -183,7 +183,7 @@ Workflow files own runner labels; `.python-version`, `pyproject.toml` and
    Use canonical versions such as `0.1.0.dev1` or `0.1.0a1`. The local plugin
    examples consume this checkout, not independently selected typebind releases.
    Their own fixture versions do not need to change with the library version.
-2. Run `uv run --locked poe check` locally and require the full hosted CI matrix
+2. Run `uv sync --locked` followed by `uv run --no-sync poe check` locally and require the full hosted CI matrix
    on the final commit. Merge the reviewed changes to `main`.
 3. To check without uploading, dispatch the current `main` snapshot:
 
@@ -284,7 +284,8 @@ For local read-only verification after an index upload, retain the expected
 artifacts and run:
 
 ```sh
-uv run --locked poe check-dist --dist-dir dist/release --index-url https://test.pypi.org/simple/
+uv sync --locked
+uv run --no-sync poe check-dist --dist-dir dist/release --index-url https://test.pypi.org/simple/
 ```
 
 This verifies an installed **wheel**. The sdist is checked locally and used by

@@ -54,9 +54,10 @@ library and plugin wheels built from this checkout and verifies their installati
 origins. The development and alpha cases change only the candidate version metadata.
 Changing the main package version does not require bumping the examples' own versions.
 
-Use `UV_PYTHON=3.12 uv run --locked poe check` on POSIX shells to check the minimum
-supported Python. On PowerShell set `$env:UV_PYTHON = "3.12"` before running the
-same command. CI checks Python 3.12–3.15 on Ubuntu 24.04. macOS and Windows are not part of
+To check the minimum supported Python on POSIX shells, run
+`UV_PYTHON=3.12 uv sync --locked`, then `uv run --no-sync poe check`.
+On PowerShell set `$env:UV_PYTHON = "3.12"` before running `uv sync --locked`
+and `uv run --no-sync poe check`. CI checks Python 3.12–3.15 on Ubuntu 24.04. macOS and Windows are not part of
 the ongoing CI validation. The full matrix runs on PRs, main pushes, manual
 checks and the release workflow. Ordinary branch pushes do not trigger CI.
 Each job syncs dependencies once and runs the Poe sub-tasks as separate steps.
@@ -123,7 +124,7 @@ Actions Dependabot checks weekly. Minor/patch version updates share a PR; major
 updates remain separate. Security updates are not delayed by that version-update
 group. Review the diff and require the full CI checks before merging.
 
-Python Dependabot is not enabled yet: the updater source inspected on 2026-10-16
+Python Dependabot is not enabled yet: the inspected updater source
 uses uv 0.12.19, while this project's required uv is 0.13.0. This source inspection
 is not a successful hosted updater test. Keep the project pin; do not add a second
 lockfile or weaken the toolchain to accommodate a bot. Until a hosted updater can
