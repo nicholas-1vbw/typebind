@@ -349,8 +349,14 @@ files and cannot safely resume, prepare a new version and approve it separately;
 do not enable production `skip-existing` as a workaround. Published filenames
 cannot be overwritten, and deleting a release does not make them reusable.
 
-There is no custom retry loop: if the index has not exposed an uploaded wheel yet,
-the verification job fails and can be rerun after checking the index. Failure of
+The candidate wheel installation from PyPI or TestPyPI makes at most four attempts,
+waiting 10, 20 and 40 seconds between failed attempts to allow index propagation.
+Every attempt uses the same version and required SHA256, with caching disabled;
+uv's diagnostics remain visible. Any nonzero installer exit receives this bounded
+retry, without classifying uv's error text. Persistent failures still fail the job.
+Dependency installation, examples and type checks are not retried, and local-wheel
+verification is unchanged. If attempts are exhausted, inspect the index before
+rerunning the failed job. Failure of
 post-PyPI verification means **published, verification failed**, not rollback;
 it also prevents GitHub Release creation. Rerun that failed verification (and its
 downstream Release job) rather than uploading again.
