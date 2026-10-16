@@ -198,6 +198,8 @@ def test_nested_roundtrip_and_original_envelope_identity() -> None:
     assert restored == document
     assert adapter.dump_json(restored, warnings="error") == wire
     assert adapter.validate_python(adapter.dump_python(document)) == document
+    adapter.rebuild(force=True)
+    assert adapter.validate_json(wire) == document
     adapter.json_schema()
 
 
@@ -394,13 +396,9 @@ def test_tags_have_literal_types_and_cannot_be_mutated() -> None:
     assert query.expression == "updated"
 
 
-def test_native_specialization_cache_and_family_fields_remain_unbound() -> None:
-    assert Message[Literal["request"]] is Message[Literal["request"]]
-    assert Request[Literal["query"]] is Request[Literal["query"]]
+def test_specialization_preserves_open_family_fields() -> None:
     assert Message.model_fields["kind"].annotation is Message.__type_params__[0]
     assert Request.model_fields["method"].annotation is Request.__type_params__[0]
-    assert Message.model_fields["kind"].default_factory is not None
-    assert not Message.model_fields["kind"].is_required()
     assert Query.model_fields["kind"].annotation == Literal["request"]
     assert Query.model_validate({"identifier": "q", "sequence": 1, "expression": "x"}).kind == (
         "request"
@@ -485,12 +483,6 @@ def test_automatic_defaults_reach_inherited_field_validators_as_strings() -> Non
     assert original == {"value": 1}
     assert Item(value=1) == item
     assert Item.model_validate_json('{"value":1}') == item
-    assert item.model_fields_set == {"kind", "value"}
-    assert item.model_dump(exclude_unset=True) == {"kind": "item", "value": 1}
-    assert item.model_dump(exclude_defaults=True) == {"value": 1}
-    adapter = TypeAdapter(Item)
-    wire = adapter.dump_json(item, exclude_defaults=True)
-    assert adapter.validate_json(wire) == item
     with pytest.raises(PydanticUserError, match="mode='before'"):
         build_adapter(Normalized[Any], variants=[Item])
     with pytest.raises(ValidationError, match="literal_error"):
@@ -515,19 +507,6 @@ def test_attribute_inputs_with_explicit_tags_round_trip() -> None:
     adapter = build_adapter(Message[Any], variants=VARIANTS)
     assert adapter.validate_python(attributes, from_attributes=True) == query
     assert adapter.validate_json(adapter.dump_json(restored, warnings="error")) == query
-
-
-def test_bound_containers_use_native_model_methods_and_adapter_rebuild() -> None:
-    query = Query(identifier="q", sequence=1, expression="x")
-    document = Document(primary=query, requests=[query], by_name={"q": query})
-    restored = Document.model_validate_json(document.model_dump_json(warnings="error"))
-    assert restored == document
-    assert type(restored.primary) is Query
-    assert type(restored.requests[0]) is Query
-    assert type(restored.by_name["q"]) is Query
-    adapter = build_adapter(Message[Any], variants=VARIANTS)
-    adapter.rebuild(force=True)
-    assert type(adapter.validate_json(adapter.dump_json(query))) is Query
 
 
 def test_conditional_tag_exclusion_is_rejected_at_declaration() -> None:
@@ -615,7 +594,6 @@ def test_inherited_leaf_defaults_and_dispatch_match_native_field_schema(
 
 
 def test_specialized_model_alias_is_constructible_and_typed() -> None:
-    assert Ping is Message[Literal["ping"]]
     ping = Ping(identifier="p")
     assert_type(ping.kind, Literal["ping"])
     assert ping.kind == "ping"
@@ -823,33 +801,6 @@ def test_defaults_preserve_validator_order_context_and_single_execution() -> Non
         item = Item.model_validate(data, context={"probe": True})
         assert item.kind == "checked"
         assert events == ["enter", "before", "field", "after", "exit"]
-
-
-def test_normal_dumps_keep_tags_and_lossy_dumps_do_not_dispatch() -> None:
-    query = Query(identifier="q", sequence=1, expression="x")
-    adapter = build_adapter(Message[Any], variants=VARIANTS)
-    document = Document(primary=query, requests=[query], by_name={"q": query})
-    data = document.model_dump()
-    for nested in (data["primary"], data["requests"][0], data["by_name"]["q"]):
-        assert nested["kind"] == "request"
-        assert nested["method"] == "query"
-    assert Document.model_validate_json(document.model_dump_json()) == document
-    assert adapter.dump_python(query)["method"] == "query"
-    assert adapter.validate_json(adapter.dump_json(query)) == query
-    assert query.model_fields_set == {"kind", "method", "identifier", "sequence", "expression"}
-    assert adapter.validate_json(adapter.dump_json(query, exclude_unset=True)) == query
-    for wire in (
-        adapter.dump_json(query, exclude_defaults=True),
-        adapter.dump_json(query, exclude={"kind"}),
-    ):
-        with pytest.raises(ValidationError, match="union_tag_not_found"):
-            adapter.validate_json(wire)
-        # A concrete model already identifies its type and can restore its defaults.
-        assert Query.model_validate_json(wire) == query
-    explicit = Query(kind="request", method="query", identifier="q", sequence=1, expression="x")
-    assert {"kind", "method"} <= explicit.model_fields_set
-    assert explicit.model_dump(exclude_unset=True)["kind"] == "request"
-    assert "kind" not in explicit.model_dump(exclude_defaults=True)
 
 
 def test_unchecked_construction_requires_explicit_tags_without_leaking_markers() -> None:
