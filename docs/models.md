@@ -516,9 +516,11 @@ Strict Pyright is verified; PyCharm and Mypy are not.
 The declaration hook reads Pydantic's generic metadata to identify the originating
 family. Default generation uses the public core-schema hook and native
 `with_default_schema`; union generation uses public Pydantic APIs. No private
-compiler options or custom generic-class creation are used. The supported Pydantic minor series is specified in
-`pyproject.toml`. Before widening that range or upgrading the resolved Pydantic /
-pydantic-core versions, verify these compatibility boundaries:
+compiler options or custom generic-class creation are used. The supported Pydantic
+range is specified in `pyproject.toml`; Pydantic selects its matching pydantic-core
+version. The minimum is 2.11.2: earlier 2.11 releases fail nested discriminator
+assembly. On versions without `exclude_if`, that field option has no exclusion
+policy to check. When changing dependencies, verify these compatibility boundaries:
 
 - Native `create_model` preserves decorated payload fields, validators, `Self`,
   schema rebuilds and inheritance; strict Pyright preserves business-field types.
@@ -542,9 +544,10 @@ pydantic-core versions, verify these compatibility boundaries:
   `exclude_defaults` and explicit inclusion/exclusion retain native semantics.
   Basic models retain native unset semantics and compile without a marking callback.
 
-Run the existing model regression tests and the full `poe check` suite against
-candidate dependency versions. The version upper bound limits the supported
-range; it does not replace these compatibility checks.
+Run the existing model regression tests and the full `poe check` suite for the
+locked candidate. The separate minimum-dependency check also runs strict typing,
+library tests, examples and isolated wheel verification with its resolved runtime
+constraints; see [Contributing](../CONTRIBUTING.md#set-up-and-run-checks).
 
 Each explicit family has one discriminator type parameter; decorated families
 have a runtime string field instead. Additional payload type parameters,

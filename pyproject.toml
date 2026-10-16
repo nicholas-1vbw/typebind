@@ -16,8 +16,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "pydantic>=2.14.1,<2.15",
-    "pydantic-core>=2.50.1",
+    "pydantic>=2.11.2,<3",
     "typing-extensions>=4.15",
 ]
 
