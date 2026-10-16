@@ -68,6 +68,11 @@ def _implementation_model(implementation: type[Implementation[Any]]) -> type[Dis
             elif issubclass(origin, Implementation):
                 parent = cast(type[Implementation[Any]], origin)
                 parameters = cast(tuple[TypeVar, ...], getattr(parent, "__parameters__", ()))
+                if len(arguments) != len(parameters):
+                    raise TypeError(
+                        f"{_name(implementation)}: expected explicit type arguments "
+                        f"for {_name(parent)}"
+                    )
                 visit(parent, dict(zip(parameters, arguments, strict=True)))
 
     visit(implementation, {})

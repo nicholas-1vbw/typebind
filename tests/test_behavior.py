@@ -1,5 +1,6 @@
 """Behavior assembly validates declarations once and binds ordinary objects."""
 
+import sys
 from abc import abstractmethod
 from importlib import metadata
 from typing import Annotated, Any, Literal, Protocol, cast
@@ -218,6 +219,56 @@ def test_unspecialized_implementation_is_rejected(bare: type[object]) -> None:
     with pytest.raises(TypeError, match=r"Implementation\[") as error:
         assemble(variants=[], implementations=[cast(Any, bare)])
     assert f"{bare.__module__}.{bare.__qualname__}" in str(error.value)
+
+
+def test_unspecialized_intermediate_implementation_is_rejected() -> None:
+    class Shared[T: DiscriminatedModel](Implementation[T]):
+        pass
+
+    # Deliberately omit the generic arguments, as an unchecked plugin may do.
+    bare = type("Unparameterized", (Shared,), {})
+    with pytest.raises(TypeError, match="expected explicit type arguments for .*Shared") as error:
+        assemble(variants=[Query], implementations=[bare])
+    assert "Unparameterized" in str(error.value)
+    assert (
+        f"Behavior implementation: {bare.__module__}.{bare.__qualname__}" in error.value.__notes__
+    )
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 13), reason="Native type parameter defaults require 3.13"
+)
+def test_implementation_type_parameter_defaults() -> None:
+    namespace: dict[str, Any] = {
+        "__name__": __name__,
+        "DiscriminatedModel": DiscriminatedModel,
+        "Implementation": Implementation,
+        "Query": Query,
+        "Describable": Describable,
+    }
+    # Keep the test module importable on Python 3.12.
+    exec(
+        """
+class Shared[T: DiscriminatedModel = Query](Implementation[T]):
+    pass
+class Bare(Shared):
+    pass
+class Explicit(Shared[()], Describable):
+    def describe(self) -> str:
+        return self.model.expression
+""",
+        namespace,
+    )
+    with pytest.raises(TypeError, match="Bare.*expected explicit type arguments for .*Shared"):
+        assemble(variants=[Query], implementations=[namespace["Bare"]])
+
+    runtime = assemble(
+        variants=[Query], implementations=[namespace["Explicit"]], required_interfaces=[Describable]
+    )
+    query = Query(identifier="q", expression="default")
+    view = runtime.adapt(query, Describable)
+    assert view.model is query
+    assert view.describe() == "default"
 
 
 def test_abstract_and_invalid_declarations() -> None:

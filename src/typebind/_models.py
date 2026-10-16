@@ -230,6 +230,7 @@ class DiscriminatedModel(BaseModel):
             annotation = cls.model_fields[field_name].annotation
             if not _is_open_tag(annotation):
                 _literal_tag(cls, field_name)
+            cls._check_tag_field(field_name)
             return
         parent_discriminator = _open_discriminator(parent)
         if parent_discriminator is not None and not _decorated_field(
@@ -450,7 +451,7 @@ def _branches(
     Unspecialized ancestors identify the family boundaries. All tag values come
     from the supplied leaf's resolved Pydantic fields, not generic arguments or
     stored paths. Repeated classes are harmless; conflicting parent/tag claims
-    raise ValueError. Open families and untagged models raise TypeError.
+    raise ValueError. Abstract models, open families and untagged models raise TypeError.
     """
     branches: dict[type[DiscriminatedModel], dict[str, type[DiscriminatedModel]]] = {}
     seen: set[type[DiscriminatedModel]] = set()
@@ -460,7 +461,11 @@ def _branches(
         if variant in seen:
             continue
         seen.add(variant)
-        if _open_discriminator(variant) is not None or not _tag_fields(variant):
+        if (
+            isabstract(variant)
+            or _open_discriminator(variant) is not None
+            or not _tag_fields(variant)
+        ):
             raise TypeError(f"{_model_name(variant)} must be a tagged leaf model")
         families = [
             base
