@@ -172,6 +172,8 @@ def main() -> None:
             '"include": ["models.py", "manual.py", "decorators.py", "commands.py"]}'
         )
         run(
+            sys.executable,
+            "-m",
             "pyright",
             "--pythonpath",
             str(python),

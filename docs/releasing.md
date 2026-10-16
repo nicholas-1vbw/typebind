@@ -10,31 +10,55 @@ The [Publish workflow](https://github.com/nicholas-1vbw/typebind/blob/main/.gith
 Merging a PR, pushing a branch or tag, or creating a GitHub Release does not upload
 anything. Its default target, `check`, runs the full CI matrix and builds/verifies
 a candidate without entering a publishing environment. Ordinary CI never uploads.
+GitHub requires repository write access to dispatch the workflow. That ability
+is separate from the configured production environment's approval. This workflow
+does not create a GitHub Release or grant any job `contents: write`.
+
+| Target | Path after shared CI, build and artifact validation |
+| --- | --- |
+| `check` (default) | Stop; no upload or publishing environment |
+| `testpypi` | TestPyPI upload and installed-wheel verification |
+| `pypi` | Production approval, PyPI upload and installed-wheel verification |
+
+TestPyPI is an independent, optional rehearsal. Production does not depend on
+its availability, publisher configuration or previous results. Each dispatch
+builds its own candidate; files are not promoted between separate workflow runs.
 
 ## One-time owner configuration
 
 These settings live outside Git; adding the workflow does not configure them.
+Configure each index only when you intend to use it. TestPyPI accounts,
+publishers and environments are not prerequisites for production publishing.
 
-1. Create separate accounts on [PyPI](https://pypi.org/) and
-   [TestPyPI](https://test.pypi.org/), verify email, enable 2FA, and keep recovery
-   codes outside the repository. Confirm the project name is available on each
-   index. Neither a repository nor a pending publisher reserves a package name.
-2. In GitHub **Settings → Environments**, create `testpypi` and `pypi`. Allow
+1. Create an account on [PyPI](https://pypi.org/) for production and optionally
+   a separate account on [TestPyPI](https://test.pypi.org/) for rehearsals. Verify
+   email, enable 2FA, and keep recovery codes outside the repository. Confirm the
+   project name is available on the selected index. Neither a repository nor a
+   pending publisher reserves a package name.
+2. In GitHub **Settings → Environments**, create `pypi` for production and
+   optionally `testpypi` for rehearsals. Allow
    deployments only from **tags** matching `v*`, not branches. Require approval
    for `pypi`; if another maintainer can approve, enable prevention of self-review.
    Restrict bypass permissions as appropriate for the maintainer team.
-3. Check your GitHub plan before relying on environment protection. Required
-   reviewers for private repositories are not available on every plan. If the
-   current plan cannot enforce approval, leave the production publisher
-   unconfigured until the repository is public or the plan supports it. An
-   environment name alone is not an approval gate.
-4. Configure a pending publisher on each index using the table below. For an
+3. Check your GitHub plan before configuring publishers. Free private repositories
+   do not provide the environment protections this workflow expects. Pro/Team
+   support private environments and deployment branch/tag restrictions, but
+   Required reviewers on these plans are still limited to public repositories.
+   Upgrading to Pro alone does not provide private production approval. Until
+   approval is available, leave the production publisher unconfigured. Use
+   `check` without publishing; even TestPyPI rehearsal requires an available
+   environment. Do not remove environment bindings to work around plan limits.
+   An environment name alone is not an approval gate.
+4. Configure a pending publisher on the selected index using the table below. For an
    existing project, add the publisher in that project's Publishing settings
    instead. The first successful upload creates a pending project.
 5. Protect `main` with required CI checks and reviewed PRs. Protect `v*` tags
    against unauthorized creation, modification and deletion using a repository
    ruleset. Only authorized release maintainers should be able to create tags.
    Review changes to workflows and release scripts as publishing authority.
+   Branch/tag rulesets are unavailable on Free private repositories; private
+   repository rulesets require Pro, Team or Enterprise. Check availability
+   before treating these rules as enforced.
 
 | Publisher field | TestPyPI | PyPI |
 | --- | --- | --- |
@@ -76,11 +100,16 @@ release archive.
 
 ## TestPyPI rehearsal and production release
 
-For a TestPyPI-only rehearsal, dispatch the selected tag:
+For the first release, or after changes to the build backend, publishing workflow
+or authentication setup, a TestPyPI rehearsal is recommended:
 
 ```sh
 gh workflow run publish.yml --ref v0.1.0 -f target=testpypi
 ```
+
+This runs the shared checks, uploads only to TestPyPI and verifies installation
+from TestPyPI. It never enters the production environment. A successful rehearsal
+validates the test publisher, not the production publisher's configuration.
 
 For a production release:
 
@@ -88,21 +117,24 @@ For a production release:
 gh workflow run publish.yml --ref v0.1.0 -f target=pypi
 ```
 
-The production run performs these steps in order:
+The production run performs these steps in order, without contacting TestPyPI:
 
 1. Reuse the existing full CI matrix at the workflow's commit.
 2. Build the sdist and wheel once for publication, then validate them using the
    existing `poe check-dist` entry point.
-3. Upload that artifact to TestPyPI.
-4. Install the TestPyPI wheel into a fresh environment using `uv pip`, with cache
+3. Wait for the configured `pypi` environment approval. Inspect the selected
+   tag/SHA, successful checks and candidate artifact, then approve.
+4. Upload the **same validated workflow artifact** to PyPI, without rebuilding.
+5. Install the PyPI wheel into a fresh environment using `uv pip`, with cache
    disabled, no dependencies and a required SHA256 derived from the candidate
    wheel. Install locked runtime dependencies separately from ordinary PyPI.
    Run the model, manual assembly and decorator examples outside the checkout,
    plus strict Pyright against the installed package.
-5. Wait for the configured `pypi` environment approval. Inspect the selected
-   tag/SHA and successful TestPyPI verification, then approve.
-6. Upload the **same workflow artifact** to PyPI, without rebuilding, and repeat
-   the hash-checked installed-wheel verification against PyPI.
+
+Both paths verify the wheel downloaded from their selected index against the
+artifact built in that run. There is no cross-run or cross-index artifact reuse
+or hash comparison. Rehearse first when appropriate, then start production as a
+separate owner action; TestPyPI is not an automatic release gate.
 
 Build and verification jobs have no OIDC permission. Upload jobs have only
 `id-token: write`, download a specific artifact ID from the current run, and
@@ -124,8 +156,8 @@ by the full CI matrix, separately from these installed-package examples.
 
 ## Retries and failure boundaries
 
-TestPyPI may already contain the version from a rehearsal, so its upload tolerates
-existing filenames. The following install still requires the candidate wheel's
+Repeated TestPyPI rehearsals may encounter the same version, so the test upload
+tolerates existing filenames. The following install still requires the candidate wheel's
 exact hash; an existing filename is not sufficient. A separate dispatch builds a
 new candidate, not a reference to the earlier run. If its bytes differ, stop and
 investigate; never remove the hash check or move an existing release tag. Prefer
@@ -161,6 +193,7 @@ not a historical secret audit and does not change repository visibility.
 - [PyPA publishing guide](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)
 - [Creating a project with Trusted Publishing](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
 - [GitHub environment protection availability](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
+- [GitHub ruleset availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
 - [Using TestPyPI](https://packaging.python.org/en/latest/guides/using-testpypi/)
 
 The build/artifact/upload separation follows the same pattern used by

@@ -119,7 +119,25 @@ def test_index_verification_downloads_expected_wheel_and_rejects_different_bytes
             "--index-url",
             url,
         ]
-        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+        # Invoke with Python directly and no pyright command on PATH. The checker
+        # must use the module installed in its own interpreter, not a CLI shim.
+        path = os.pathsep.join(
+            entry
+            for entry in os.environ["PATH"].split(os.pathsep)
+            if shutil.which("pyright", path=entry) is None
+        )
+        # uv and pyright may share an installation directory. Keep the resolved
+        # standalone uv binary available without restoring the pyright command.
+        tools = tmp_path / "tools"
+        tools.mkdir()
+        shutil.copy2(uv, tools / Path(uv).name)
+        path = os.pathsep.join((str(tools), path))
+        assert shutil.which("pyright", path=path) is None
+        assert shutil.which("uv", path=path) is not None
+        environment = {**os.environ, "PATH": path}
+        result = subprocess.run(
+            command, cwd=ROOT, env=environment, capture_output=True, text=True, check=False
+        )
         assert result.returncode == 0, result.stdout + result.stderr
         assert f"strict typing from {url}" in result.stdout
         # A valid ZIP comment changes bytes without changing the package/version.
