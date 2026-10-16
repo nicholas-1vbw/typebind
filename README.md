@@ -1,5 +1,11 @@
 # typebind
 
+[![PyPI](https://img.shields.io/pypi/v/typebind)](https://pypi.org/project/typebind/)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange)](https://github.com/nicholas-1vbw/typebind/releases)
+[![Python](https://img.shields.io/pypi/requires-python/typebind)](https://pypi.org/project/typebind/)
+[![CI](https://github.com/nicholas-1vbw/typebind/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nicholas-1vbw/typebind/actions/workflows/ci.yml?query=branch%3Amain)
+[![License: MIT](https://img.shields.io/github/license/nicholas-1vbw/typebind)](https://github.com/nicholas-1vbw/typebind/blob/main/LICENSE)
+
 Build extensible Pydantic model families with automatic discriminator tags and
 statically typed fields. Bind behavior implementations to models without mixing
 them into the data classes. Select variants explicitly, or optionally discover
@@ -7,12 +13,17 @@ models and implementations supplied by installed plugin packages.
 
 ## Install
 
-Python 3.12 or later is required. This project is preparing its first release and
-has not been published to PyPI. From a local checkout:
+Python 3.12 or later is required.
+
+typebind is currently in alpha. Public APIs may change between alpha releases.
 
 ```sh
-python -m pip install .
+python -m pip install --pre typebind
 ```
+
+See [GitHub Releases](https://github.com/nicholas-1vbw/typebind/releases)
+for release notes. For development setup, see
+[Contributing](https://github.com/nicholas-1vbw/typebind/blob/main/CONTRIBUTING.md).
 
 The supported Pydantic range and other runtime requirements are declared in
 [pyproject.toml](https://github.com/nicholas-1vbw/typebind/blob/main/pyproject.toml).
