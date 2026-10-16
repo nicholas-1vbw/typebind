@@ -230,7 +230,7 @@ source contents, dependency installation from wheel metadata, and strict typing
 outside the checkout. The lockfile constrains dependency versions; it does not
 preinstall packages that a wheel failed to declare.
 
-[CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps for Python 3.12–3.15 on Linux, macOS and Windows.
+[CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps for Python 3.12–3.15 on Ubuntu 24.04. macOS and Windows are not part of ongoing CI validation.
 Each job passes its Python version to `setup-uv`, which sets `UV_PYTHON` and
 includes the version in its cache key. The full matrix runs on pull requests,
 main pushes, manual dispatch, and the release workflow; ordinary branch pushes do not trigger a second run. It synchronizes locked dependencies once,
@@ -238,7 +238,8 @@ then uses `uv run --no-sync` for each step. Local development
 defaults to `.python-version`; set `UV_PYTHON=3.12` when running `poe check` to
 check the minimum supported version. Strict Pyright targets Python 3.12.
 A separate CI job validates GitHub workflow syntax with actionlint.
-Local `poe check` remains the aggregate entry point. `poe benchmark` runs model
+Local `poe check` remains the aggregate entry point. Benchmarks run manually for
+performance-related changes, not on every CI run. `poe benchmark` runs model
 construction/JSON and behavior adaptation benchmarks; `poe benchmark-models` and
 `poe benchmark-behavior` run them separately. Model cases compare omitted and
 explicit tags for both public bases at one and two levels, including named

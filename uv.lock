@@ -977,7 +977,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "typebind", specifier = ">=0.1.0" }]
+requires-dist = [{ name = "typebind" }]
 
 [[package]]
 name = "typebind-example-extra"
@@ -990,8 +990,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "typebind", specifier = ">=0.1.0" },
-    { name = "typebind-example-core", specifier = "==0.1.0" },
+    { name = "typebind" },
+    { name = "typebind-example-core" },
 ]
 
 [[package]]

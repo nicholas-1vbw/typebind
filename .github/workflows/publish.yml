@@ -24,7 +24,7 @@ jobs:
   build:
     name: Build release artifacts
     needs: check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
       prerelease: ${{ steps.release.outputs.prerelease }}
@@ -65,7 +65,7 @@ jobs:
     name: Upload to TestPyPI
     if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi' && github.ref == 'refs/heads/main'
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Serialize uploads of this version without blocking other versions or PyPI.
     concurrency:
       group: publish-testpypi-${{ needs.build.outputs.version }}
@@ -92,7 +92,7 @@ jobs:
   verify-testpypi:
     name: Verify installation from TestPyPI
     needs: [build, testpypi]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -117,7 +117,7 @@ jobs:
     name: Upload verified artifacts to PyPI
     if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     concurrency:
       group: publish-pypi-${{ needs.build.outputs.version }}
       cancel-in-progress: false
@@ -138,7 +138,7 @@ jobs:
   verify-pypi:
     name: Verify installation from PyPI
     needs: [build, pypi]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -162,7 +162,7 @@ jobs:
   github-release:
     name: Create GitHub Release after PyPI verification
     needs: [build, verify-pypi]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # Only this job may create the release and attach distributions.
     steps:
