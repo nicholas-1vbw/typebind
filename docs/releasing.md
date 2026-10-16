@@ -24,6 +24,32 @@ TestPyPI is an independent, optional rehearsal. Production does not depend on
 its availability, publisher configuration or previous results. Each dispatch
 builds its own candidate; files are not promoted between separate workflow runs.
 
+## Public contributions and release authority
+
+The intended deployment is a **public repository accepting external pull
+requests**. Repository privacy and the current number of collaborators are not
+security controls for this design.
+
+| Actor | Allowed activity | Boundary |
+| --- | --- | --- |
+| External contributor | Fork, open a PR, run approved PR checks | No upstream write access, publishing environment or publishing identity |
+| Code maintainer with write access | Review/merge according to main rules; dispatch workflows | Dispatch does not grant production approval or permission to create release tags |
+| Release maintainer | Create authorized version tags and approve production uploads | Tag rules and the `pypi` environment must enforce this role outside workflow code |
+
+PR checks run untrusted contributor code via `pull_request` on GitHub-hosted
+runners with read-only repository permissions. CI has no publishing environment,
+OIDC permission or inherited secrets. Do not change this to execute PR code under
+`pull_request_target`, an elevated `workflow_run`, or a persistent self-hosted
+runner. Release jobs consume only their own run's artifact ID; they do not accept
+an artifact supplied by a PR or another workflow run.
+
+A fork's workflow has the fork's identity, not the upstream publisher identity.
+Nevertheless, review third-party changes to workflows, release scripts, build
+configuration and dependencies carefully before merging. Someone who can change
+the trusted workflow can remove its Python guards. Tag/version checks and tests
+catch mistakes; they do not replace GitHub rules and environment approval.
+Trusted Publishing authenticates the workflow, not the safety of package code.
+
 ## One-time owner configuration
 
 These settings live outside Git; adding the workflow does not configure them.
@@ -40,7 +66,8 @@ publishers and environments are not prerequisites for production publishing.
    deployments only from **tags** matching `v*`, not branches. Require approval
    for `pypi`; if another maintainer can approve, enable prevention of self-review.
    Restrict bypass permissions as appropriate for the maintainer team.
-3. Check your GitHub plan before configuring publishers. Free private repositories
+3. While the repository is still private, check your GitHub plan before
+   configuring publishers. Free private repositories
    do not provide the environment protections this workflow expects. Pro/Team
    support private environments and deployment branch/tag restrictions, but
    Required reviewers on these plans are still limited to public repositories.
@@ -52,13 +79,40 @@ publishers and environments are not prerequisites for production publishing.
 4. Configure a pending publisher on the selected index using the table below. For an
    existing project, add the publisher in that project's Publishing settings
    instead. The first successful upload creates a pending project.
-5. Protect `main` with required CI checks and reviewed PRs. Protect `v*` tags
-   against unauthorized creation, modification and deletion using a repository
-   ruleset. Only authorized release maintainers should be able to create tags.
-   Review changes to workflows and release scripts as publishing authority.
-   Branch/tag rulesets are unavailable on Free private repositories; private
-   repository rulesets require Pro, Team or Enterprise. Check availability
-   before treating these rules as enforced.
+5. Under **Settings → Rules → Rulesets**, create active rules for `main`: require
+   PRs and the full CI checks, and block force pushes and deletion. Review all
+   external PRs. With at least two trusted maintainers, require approving reviews,
+   dismiss stale approvals and require code-owner review for `.github/workflows/`,
+   `scripts/`, `pyproject.toml` and `uv.lock` through `CODEOWNERS`. A sole maintainer
+   cannot independently approve their own PR; do not claim two-person review or
+   enable requirements that prevent all maintainer updates without a considered
+   exception policy.
+6. Protect `v*` tags with active rulesets. Limit creation to release maintainers
+   and prohibit updates/deletion. Keep the creation exception separate from the
+   update/deletion rules so a creation bypass does not also allow moving a release
+   tag. Review any bypass roles; repository write access should not automatically
+   grant release authority. Public repositories support these rules on Free;
+   private repository rulesets require Pro, Team or Enterprise.
+7. Under **Settings → Actions → General**, use read-only default workflow
+   permissions, leave workflow PR creation/approval disabled, and require approval
+   for fork workflows from outside collaborators. Such approval permits running
+   untrusted tests; it is not approval to merge or publish. Keep release jobs free
+   of repository secrets and restrict write/admin access to trusted maintainers.
+   Use 2FA for maintainer accounts and review authorized apps/tokens as well.
+
+For `pypi`, select release maintainers as Required reviewers and disable routine
+administrator bypass. A single maintainer can use explicit self-approval as a
+release confirmation, but it is not separation of duties. Once another trusted
+release approver is available, enable Prevent self-review. Inspect the exact
+candidate SHA and artifact before approval, including workflow changes.
+
+Before the first public release, verify these settings in GitHub (not only the
+YAML). Check that a fork PR runs only unprivileged CI, cannot deploy to `pypi`, and
+cannot introduce an artifact into a release run. Confirm that unauthorized tag
+creation is rejected and production waits for the designated approver. The local
+workflow tests check configuration contracts; they do not prove the live rules
+are enabled. Do not turn on production publishing until these controls are in
+place. Changing visibility alone does not configure them.
 
 | Publisher field | TestPyPI | PyPI |
 | --- | --- | --- |
@@ -190,6 +244,8 @@ not a historical secret audit and does not change repository visibility.
 
 ## References
 
+- [Trusted Publishing security model](https://docs.pypi.org/trusted-publishers/security-model/)
+- [GitHub Actions secure use](https://docs.github.com/en/actions/reference/security/secure-use)
 - [PyPA publishing guide](https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/)
 - [Creating a project with Trusted Publishing](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
 - [GitHub environment protection availability](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)

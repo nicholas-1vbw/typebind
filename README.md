@@ -263,8 +263,8 @@ Production does not require TestPyPI. Uploads require a version tag on main and
 the selected publishing environment. Ordinary CI never publishes.
 
 See the [release guide](https://github.com/nicholas-1vbw/typebind/blob/main/docs/releasing.md)
-for owner setup, approvals, commands, retry boundaries, and the review needed
-before a private repository or package becomes public. A repository name does
+for public-contributor permission boundaries, owner setup, approvals, commands,
+retry boundaries, and the review needed before a repository or package becomes public. A repository name does
 not reserve the PyPI project name.
 
 ## License

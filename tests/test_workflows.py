@@ -62,3 +62,21 @@ def test_checkout_never_persists_credentials() -> None:
             for step in cast(list[dict[str, Any]], job.get("steps", [])):
                 if step.get("uses", "").startswith("actions/checkout@"):
                     assert step["with"]["persist-credentials"] == "false"
+
+
+def test_external_pull_requests_run_only_unprivileged_ci() -> None:
+    config = workflow("ci.yml")
+    assert set(config["on"]) == {"push", "pull_request", "workflow_dispatch", "workflow_call"}
+    assert config["on"]["push"]["branches"] == ["main"]
+    assert config["permissions"] == {"contents": "read"}
+    jobs = cast(dict[str, dict[str, Any]], config["jobs"])
+    for job in jobs.values():
+        assert "environment" not in job
+        assert "secrets" not in job
+        assert job.get("permissions", config["permissions"]) == {"contents": "read"}
+        assert job["runs-on"] in {"ubuntu-latest", "${{ matrix.os }}"}
+    assert set(jobs["check"]["strategy"]["matrix"]["os"]) == {
+        "ubuntu-latest",
+        "macos-latest",
+        "windows-latest",
+    }
