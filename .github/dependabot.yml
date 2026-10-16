@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+# Python updates use the pinned project uv until the hosted uv updater supports it.
+# See CONTRIBUTING.md; do not weaken required-version to accommodate the bot.

@@ -66,8 +66,10 @@ Trusted Publishing authenticates the workflow, not the safety of package code.
 ## One-time owner configuration
 
 These settings live outside Git; adding the workflow does not configure them.
-Configure each index only when you intend to use it. TestPyPI accounts,
-publishers and environments are not prerequisites for production publishing.
+After the [public-content review](#before-making-this-repository-public), the owner
+can change visibility under **Settings → General → Danger Zone** when authorized.
+Configure the controls below before enabling uploads; public visibility alone
+sets none of them. TestPyPI accounts, publishers and environments are optional.
 
 1. Create an account on [PyPI](https://pypi.org/) for production and optionally
    a separate account on [TestPyPI](https://test.pypi.org/) for rehearsals. Verify
@@ -90,20 +92,25 @@ publishers and environments are not prerequisites for production publishing.
    `check` without publishing; even TestPyPI rehearsal requires an available
    environment. Do not remove environment bindings to work around plan limits.
    An environment name alone is not an approval gate.
-4. Configure a pending publisher on the selected index using the table below. For an
-   existing project, add the publisher in that project's Publishing settings
-   instead. The first successful upload creates a pending project.
+4. Verify the publisher identity against the table below. Keep an existing matching
+   publisher; for a new project configure a pending publisher, or use the existing
+   project's Publishing settings. A pending publisher creates the project on its
+   first successful upload. No API token is needed.
 5. Under **Settings → Rules → Rulesets**, create active rules for `main`: require
-   PRs and the full CI checks, and block force pushes and deletion. Review all
-   external PRs. With at least two trusted maintainers, require approving reviews,
+   PRs, block force pushes and deletion, and require these five checks:
+   `Validate GitHub Actions workflows`, `Check (Python 3.12)`,
+   `Check (Python 3.13)`, `Check (Python 3.14)` and `Check (Python 3.15)`.
+   Do not require the independent `Audit locked dependencies` notification job.
+   Review all external PRs. With at least two trusted maintainers, require approving reviews,
    dismiss stale approvals and require code-owner review for `.github/workflows/`,
    `scripts/`, `pyproject.toml` and `uv.lock` through `CODEOWNERS`. A sole maintainer
    cannot independently approve their own PR; do not claim two-person review or
    enable requirements that prevent all maintainer updates without a considered
    exception policy.
 6. Protect `v*` tags with active rulesets. Limit creation to release maintainers
-   and prohibit updates/deletion. Keep the creation exception separate from the
-   update/deletion rules so a creation bypass does not also allow moving a release
+   and prohibit updates/deletion. The sole owner can use the Repository admins
+   role for creation bypass; do not hard-code an account name in CI. Keep the
+   creation exception separate from the update/deletion rules so a creation bypass does not also allow moving a release
    tag. Review any bypass roles; repository write access should not automatically
    grant release authority. GitHub rulesets enforce tag protection; the workflow
    does not infer it from `github.ref_protected`, which has been reported false
@@ -122,12 +129,20 @@ publishers and environments are not prerequisites for production publishing.
    `GITHUB_TOKEN`; no personal access token or write-enabled default is needed.
    Organization policies must permit this job-level permission and the pinned
    actions used by the workflow.
-
-For both environments, select release maintainers as Required reviewers and
-disable administrator bypass. A single maintainer can use explicit self-approval as a
-release confirmation, but it is not separation of duties. Once another trusted
-release approver is available, enable Prevent self-review. Inspect the exact
-candidate SHA and artifact before approval, including workflow changes.
+8. Under **Settings → Advanced Security / Code security**, enable the Dependency
+   graph, Dependabot alerts and security updates, plus available secret scanning
+   and push protection. Enable private vulnerability reporting and confirm
+   **Security → Advisories → Report a vulnerability** is available, matching
+   `SECURITY.md`. Enable CodeQL's default Python setup and inspect its first
+   result; no additional custom CodeQL workflow is needed. These controls do not
+   make the deferred Python dependency updater compatible with the required uv;
+   see [dependency maintenance](../CONTRIBUTING.md#environment-and-dependency-maintenance).
+9. Subscribe through **Watch → Custom → Security alerts**. Under personal
+   **Settings → Notifications → Actions**, enable Email or On GitHub delivery
+   (optionally failed workflows only). Inspect the first weekly dependency audit
+   and hosted dependency update. Scheduled-run notifications follow the workflow
+   creator, last cron editor or person who re-enabled it; that account must remain
+   an active maintainer. Keep the audit advisory rather than a required merge check.
 
 Before the first public release, verify these settings in GitHub (not only the
 YAML). Check that a fork PR runs only unprivileged CI, cannot deploy to `pypi`, and
@@ -156,12 +171,10 @@ are pinned to commit SHAs; review their updates as dependency changes.
 
 ## Environment policy
 
-CI and publishing use Ubuntu 24.04; workflow files own the runner labels. The
-Python compatibility matrix follows patch releases within 3.12–3.15, while local
-checks and publishing use `.python-version`. uv and the build-backend constraint
-are fixed in `pyproject.toml`, dependency versions in `uv.lock`, and third-party
-Actions by commit SHA. A versioned OS label prevents an automatic OS-major move;
-GitHub still updates its image and runner-provided tools.
+CI and publishing share the runner and toolchain policy in
+[Contributing](../CONTRIBUTING.md#environment-and-dependency-maintenance).
+Workflow files own runner labels; `.python-version`, `pyproject.toml` and
+`uv.lock` own their respective Python, tool and dependency selections.
 
 ## Prepare and check a candidate
 
@@ -172,8 +185,7 @@ GitHub still updates its image and runner-provided tools.
    Their own fixture versions do not need to change with the library version.
 2. Run `uv run --locked poe check` locally and require the full hosted CI matrix
    on the final commit. Merge the reviewed changes to `main`.
-3. To rehearse without uploading, run the following after this workflow has
-   been merged. The command uses the current `main` snapshot:
+3. To check without uploading, dispatch the current `main` snapshot:
 
    ```sh
    gh workflow run publish.yml --ref main -f target=check

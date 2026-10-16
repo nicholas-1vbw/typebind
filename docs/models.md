@@ -24,9 +24,8 @@ remain the single source of truth for both policies.
 Ordinary JSON dumps retain tags for both bases. Choose the identity base when
 exports using `exclude_unset=True` must remain routable. Changing an existing
 family from the identity base to the basic base changes that export contract.
-Families migrating from the previous single-base API should choose
-`IdentityDiscriminatedModel` to keep its unset-export behavior. The following guide
-uses the identity base; the runnable model example demonstrates both policies.
+The following guide uses the identity base; the runnable model example
+demonstrates both policies.
 
 ## Model declarations
 

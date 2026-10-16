@@ -19,7 +19,8 @@ jobs:
   check:
     name: Full release checks
     if: github.event_name != 'push' || github.event.deleted == false
-    uses: ./.github/workflows/ci.yml
+    # actionlint 1.7.12 rejects $/; this local call still uses the caller commit.
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
 
   build:
     name: Build release artifacts

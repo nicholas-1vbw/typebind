@@ -97,8 +97,6 @@ Both bases allow matching explicit tags during validation, reject discriminator
 assignment, and reject bound discriminator keys in `model_copy(update=...)`, even
 for unchanged values. Other copy updates retain native unvalidated semantics; see
 [identity and copying](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#identity-and-copying).
-Existing families that need the earlier unset-export guarantee should inherit
-`IdentityDiscriminatedModel`. Ordinary dumps retain tags with either base.
 `exclude_defaults=True` and explicit tag exclusions can remove tags with either
 base; do not use those options for family interchange. When a storage SDK expects a dictionary,
 use `model_dump(mode="json")` (or `adapter.dump_python(mode="json")`).
@@ -212,72 +210,16 @@ supported. Strict Pyright is verified; PyCharm and Mypy are not. Pydantic's
 supported minor series is intentionally bounded because declaration validation
 reads its generic metadata; see the [model boundaries](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#current-boundaries).
 
-## Development and verification
+## Contributing
 
-```sh
-uv run --locked poe check
-uv run --locked poe benchmark
-```
-
-`check` runs Ruff, strict Pyright, pytest, all runnable examples, a wheel/sdist build,
-and artifact verification. Runnable examples in `examples/` are the executable
-usage references; README and guide prose are reviewed rather than parsed as tests.
-The installed-plugin test runs the discovery example against real installed
-plugin wheels, covering entry points, behavior assembly, nested round trips and
-cross-package typing. Generic wheel smoke checks belong to artifact verification.
-The native build creates a wheel from the sdist; artifact checks verify metadata, MIT, `py.typed`,
-source contents, dependency installation from wheel metadata, and strict typing
-outside the checkout. The lockfile constrains dependency versions; it does not
-preinstall packages that a wheel failed to declare.
-
-[CI](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/ci.yml) runs the same Poe sub-tasks as separate steps for Python 3.12–3.15 on Ubuntu 24.04. macOS and Windows are not part of ongoing CI validation.
-Each job passes its Python version to `setup-uv`, which sets `UV_PYTHON` and
-includes the version in its cache key. The full matrix runs on pull requests,
-main pushes, manual dispatch, and the release workflow; ordinary branch pushes do not trigger a second run. It synchronizes locked dependencies once,
-then uses `uv run --no-sync` for each step. Local development
-defaults to `.python-version`; set `UV_PYTHON=3.12` when running `poe check` to
-check the minimum supported version. Strict Pyright targets Python 3.12.
-A separate CI job validates GitHub workflow syntax with actionlint.
-Local `poe check` remains the aggregate entry point. Benchmarks run manually for
-performance-related changes, not on every CI run. `poe benchmark` runs model
-construction/JSON and behavior adaptation benchmarks; `poe benchmark-models` and
-`poe benchmark-behavior` run them separately. Model cases compare omitted and
-explicit tags for both public bases at one and two levels, including named
-Literal aliases, against
-ordinary Pydantic models with matching frozen fields and `validate_default=True`.
-A second native control marks the same identity fields as set through a standard
-validator, exposing the cost of that guarantee separately from plain defaults.
-Decorator cases measure the same one- and two-tag construction paths against
-these native controls. Copy cases report the identity guard cost separately from
-native unchecked copies. JSON cases cover serialization, validation and nested
-round trips with `exclude_unset=True`.
-Benchmarks
-have no timing threshold and do not measure service throughput. Local passing
-checks do not imply that hosted CI has passed. Development tools and example
-packages are in the development dependency group; the library's runtime
-requirements remain separate. Update `uv.lock` when dependencies change.
+See [Contributing](https://github.com/nicholas-1vbw/typebind/blob/main/CONTRIBUTING.md)
+for setup, checks, benchmarks and dependency maintenance. Report vulnerabilities
+through the [security policy](https://github.com/nicholas-1vbw/typebind/blob/main/SECURITY.md).
 
 ## Publishing
 
-The [Publish workflow](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/publish.yml)
-starts automatically on a protected version tag push: full CI, artifact validation,
-configured production approval, PyPI upload, then installed-wheel verification.
-Only after verification succeeds does it create a GitHub Release with generated
-notes and the same wheel/sdist as assets. Trusted Publishing uses no stored API
-tokens; the Release job uses GitHub's built-in token with job-scoped write access.
-
-Manual dispatch defaults to `check` (no upload) and also offers `testpypi` as an
-independent optional rehearsal from `main`, without creating a version tag.
-Production tags, including development and alpha/beta/rc versions, publish to
-PyPI; TestPyPI is not a daily development-release channel or a production prerequisite.
-Both upload paths require their configured environment approval. Ordinary
-PR/branch CI never publishes. Configure tag rules and the approval gate before
-pushing a release tag; YAML alone does not enable these protections.
-
-See the [release guide](https://github.com/nicholas-1vbw/typebind/blob/main/docs/releasing.md)
-for public-contributor permission boundaries, owner setup, approvals, commands,
-retry boundaries, and the review needed before a repository or package becomes public. A repository name does
-not reserve the PyPI project name.
+See [Releasing](https://github.com/nicholas-1vbw/typebind/blob/main/docs/releasing.md)
+for owner setup, optional TestPyPI rehearsals and approved tag-based PyPI releases.
 
 ## License
 
