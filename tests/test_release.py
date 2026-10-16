@@ -35,7 +35,12 @@ def repository(tmp_path: Path) -> Path:
 
 
 def check_release(
-    repository: Path, *, ref: str = "refs/tags/v0.1.0", sha: str | None = None
+    repository: Path,
+    *,
+    ref: str = "refs/tags/v0.1.0",
+    sha: str | None = None,
+    event: str = "workflow_dispatch",
+    protected: str = "false",
 ) -> int:
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts/check_release.py")],
@@ -43,6 +48,9 @@ def check_release(
         env={
             **os.environ,
             "GITHUB_REF": ref,
+            "GITHUB_EVENT_NAME": event,
+            "RELEASE_REF_PROTECTED": protected,
+            "GITHUB_OUTPUT": str(repository / "release-output"),
             "GITHUB_SHA": sha or git(repository, "rev-parse", "HEAD"),
         },
         capture_output=True,
@@ -79,6 +87,30 @@ def test_moved_tag_or_unmerged_commit_is_rejected(repository: Path) -> None:
     assert check_release(repository) != 0  # Tag and checkout differ.
     git(repository, "tag", "-f", "v0.1.0")
     assert check_release(repository) != 0  # Now they agree, but commit is not on main.
+
+
+@pytest.mark.parametrize("protected", ["false", "", "true"])
+def test_tag_push_requires_protection(repository: Path, protected: str) -> None:
+    result = check_release(repository, event="push", protected=protected)
+    assert (result == 0) is (protected == "true")
+
+
+@pytest.mark.parametrize(
+    ("version", "prerelease"),
+    [("0.1.0", "false"), ("0.2.0rc1", "true"), ("0.2.0.dev1", "true"), ("0.1.0.post1", "false")],
+)
+def test_release_metadata_uses_project_version(
+    repository: Path, version: str, prerelease: str
+) -> None:
+    (repository / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
+    git(repository, "add", "pyproject.toml")
+    git(repository, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Version")
+    git(repository, "update-ref", "refs/remotes/origin/main", "HEAD")
+    git(repository, "tag", "-f", f"v{version}")
+    assert (
+        check_release(repository, ref=f"refs/tags/v{version}", event="push", protected="true") == 0
+    )
+    assert (repository / "release-output").read_text() == f"prerelease={prerelease}\n"
 
 
 @contextmanager

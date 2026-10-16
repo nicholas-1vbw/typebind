@@ -254,13 +254,18 @@ requirements remain separate. Update `uv.lock` when dependencies change.
 
 ## Publishing
 
-The manual [Publish workflow](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/publish.yml)
-uses Trusted Publishing without stored API tokens. Its default `check` target
-only verifies; `testpypi` runs an optional rehearsal, and `pypi` publishes directly
-to PyPI after checks, artifact validation and the configured production approval.
-Each upload is followed by an installed-wheel check against its own index.
-Production does not require TestPyPI. Uploads require a version tag on main and
-the selected publishing environment. Ordinary CI never publishes.
+The [Publish workflow](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/publish.yml)
+starts automatically on a protected version tag push: full CI, artifact validation,
+configured production approval, PyPI upload, then installed-wheel verification.
+Only after verification succeeds does it create a GitHub Release with generated
+notes and the same wheel/sdist as assets. Trusted Publishing uses no stored API
+tokens; the Release job uses GitHub's built-in token with job-scoped write access.
+
+Manual dispatch defaults to `check` (no upload) and also offers `testpypi` as an
+independent optional rehearsal. Production does not require TestPyPI. Uploads
+require a version tag on main and the selected publishing environment. Ordinary
+PR/branch CI never publishes. Configure tag rules and the approval gate before
+pushing a release tag; YAML alone does not enable these protections.
 
 See the [release guide](https://github.com/nicholas-1vbw/typebind/blob/main/docs/releasing.md)
 for public-contributor permission boundaries, owner setup, approvals, commands,

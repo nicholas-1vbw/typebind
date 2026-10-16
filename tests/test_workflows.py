@@ -17,16 +17,26 @@ def workflow(name: str) -> dict[str, Any]:
     )
 
 
-def test_publish_defaults_to_checks_without_automatic_upload_triggers() -> None:
+def test_only_version_tag_pushes_start_production_and_manual_defaults_to_checks() -> None:
     config = workflow("publish.yml")
-    assert set(config["on"]) == {"workflow_dispatch"}
+    assert set(config["on"]) == {"push", "workflow_dispatch"}
+    assert config["on"]["push"] == {"tags": ["v*"]}
     target = config["on"]["workflow_dispatch"]["inputs"]["target"]
     assert target["default"] == "check"
-    assert set(target["options"]) == {"check", "testpypi", "pypi"}
+    assert set(target["options"]) == {"check", "testpypi"}
     assert config["permissions"] == {"contents": "read"}
     jobs = config["jobs"]
     assert jobs["check"]["uses"] == "./.github/workflows/ci.yml"
+    assert jobs["check"]["if"] == "github.event_name != 'push' || github.event.deleted == false"
     assert jobs["build"]["needs"] == "check"
+    assert config["concurrency"] == {
+        "group": "publish-${{ github.event_name == 'push' && 'pypi' || inputs.target }}",
+        "cancel-in-progress": "false",
+    }
+    guard = next(step for step in jobs["build"]["steps"] if step.get("id") == "release")
+    assert guard["if"] == "github.event_name == 'push' || inputs.target == 'testpypi'"
+    assert guard["env"]["RELEASE_REF_PROTECTED"] == "${{ github.ref_protected }}"
+    assert guard["run"] == "uv run --no-sync python scripts/check_release.py"
     assert not any("environment" in jobs[job] for job in ("check", "build"))
     privileged = {
         name
@@ -40,7 +50,12 @@ def test_publish_defaults_to_checks_without_automatic_upload_triggers() -> None:
 def test_each_upload_path_is_independent_and_verifies_its_own_artifact(target: str) -> None:
     jobs = workflow("publish.yml")["jobs"]
     upload = jobs[target]
-    assert upload["if"] == f"inputs.target == '{target}'"
+    expected = (
+        "github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'"
+        if target == "testpypi"
+        else "github.event_name == 'push' && github.ref_type == 'tag' && github.ref_protected"
+    )
+    assert upload["if"] == expected
     assert upload["needs"] == "build"  # Neither index is a dependency of the other.
     assert upload["environment"]["name"] == target
     assert upload["permissions"] == {"id-token": "write"}
@@ -80,3 +95,41 @@ def test_external_pull_requests_run_only_unprivileged_ci() -> None:
         "macos-latest",
         "windows-latest",
     }
+
+
+def test_github_release_requires_successful_pypi_verification_and_same_artifacts() -> None:
+    jobs = workflow("publish.yml")["jobs"]
+    release = jobs["github-release"]
+    assert set(release["needs"]) == {"build", "verify-pypi"}
+    assert "if" not in release  # A failed/skipped PyPI verification blocks the release.
+    assert release["permissions"] == {"contents": "write"}
+    writers = {
+        name
+        for name, job in cast(dict[str, dict[str, Any]], jobs).items()
+        if job.get("permissions", {}).get("contents") == "write"
+    }
+    assert writers == {"github-release"}
+    steps = cast(list[dict[str, Any]], release["steps"])
+    assert not any("actions/checkout@" in step.get("uses", "") for step in steps)
+    assert steps[0]["with"]["artifact-ids"] == "${{ needs.build.outputs.artifact-id }}"
+    command = steps[-1]
+    assert command["env"] == {
+        "GH_TOKEN": "${{ github.token }}",
+        "GH_REPO": "${{ github.repository }}",
+        "RELEASE_TAG": "${{ github.ref_name }}",
+        "PRERELEASE": "${{ needs.build.outputs.prerelease }}",
+    }
+    assert command["run"].split() == [
+        "gh",
+        "release",
+        "create",
+        '"$RELEASE_TAG"',
+        "dist/*.whl",
+        "dist/*.tar.gz",
+        "--verify-tag",
+        "--generate-notes",
+        "--title",
+        '"$RELEASE_TAG"',
+        '--prerelease="$PRERELEASE"',
+    ]
+    assert jobs["build"]["outputs"]["prerelease"] == "${{ steps.release.outputs.prerelease }}"

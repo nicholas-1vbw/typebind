@@ -6,23 +6,30 @@ action with Trusted Publishing. No PyPI API token, `.pypirc`, or GitHub secret i
 needed. GitHub issues a short-lived OIDC identity to each upload job; the index
 checks that it matches the configured repository, workflow and environment.
 
-The [Publish workflow](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/publish.yml) is **manual only**.
-Merging a PR, pushing a branch or tag, or creating a GitHub Release does not upload
-anything. Its default target, `check`, runs the full CI matrix and builds/verifies
-a candidate without entering a publishing environment. Ordinary CI never uploads.
-GitHub requires repository write access to dispatch the workflow. That ability
-is separate from the configured production environment's approval. This workflow
-does not create a GitHub Release or grant any job `contents: write`.
+The [Publish workflow](https://github.com/nicholas-1vbw/typebind/blob/main/.github/workflows/publish.yml)
+starts production automatically when a `v*` tag is pushed. It runs full checks,
+verifies the protected tag and version, builds distributions, waits for the
+configured `pypi` approval, uploads to PyPI, verifies installation, then creates
+GitHub Release notes and attaches the same distributions. Approval is enforced
+by GitHub environment settings, not by the presence of `environment` in YAML.
 
-| Target | Path after shared CI, build and artifact validation |
+| Trigger | Path after shared CI, build and artifact validation |
 | --- | --- |
-| `check` (default) | Stop; no upload or publishing environment |
-| `testpypi` | TestPyPI upload and installed-wheel verification |
-| `pypi` | Production approval, PyPI upload and installed-wheel verification |
+| Manual `check` (default) | Stop; no upload or publishing environment |
+| Manual `testpypi` | TestPyPI upload and installed-wheel verification |
+| Push a protected `v*` tag | Production approval, PyPI upload, installed-wheel verification, GitHub Release |
+
+There is no manual production target. Merging a PR, pushing a branch, or creating
+a GitHub Release does not trigger publication. Ordinary CI never uploads.
+GitHub requires repository write access for manual dispatch; tag creation and
+production approval have separate controls described below.
 
 TestPyPI is an independent, optional rehearsal. Production does not depend on
-its availability, publisher configuration or previous results. Each dispatch
-builds its own candidate; files are not promoted between separate workflow runs.
+its availability, publisher configuration or previous results. Each run builds
+its own candidate; files are not promoted between separate workflow runs.
+Production and TestPyPI have separate concurrency groups, so a pending production
+approval does not block a manual rehearsal. Do not queue multiple production
+versions at once: GitHub concurrency is not a durable FIFO release queue.
 
 ## Public contributions and release authority
 
@@ -33,7 +40,7 @@ security controls for this design.
 | Actor | Allowed activity | Boundary |
 | --- | --- | --- |
 | External contributor | Fork, open a PR, run approved PR checks | No upstream write access, publishing environment or publishing identity |
-| Code maintainer with write access | Review/merge according to main rules; dispatch workflows | Dispatch does not grant production approval or permission to create release tags |
+| Code maintainer with write access | Review/merge according to main rules; dispatch checks/rehearsals | Dispatch does not grant production approval or permission to create release tags |
 | Release maintainer | Create authorized version tags and approve production uploads | Tag rules and the `pypi` environment must enforce this role outside workflow code |
 
 PR checks run untrusted contributor code via `pull_request` on GitHub-hosted
@@ -91,7 +98,10 @@ publishers and environments are not prerequisites for production publishing.
    and prohibit updates/deletion. Keep the creation exception separate from the
    update/deletion rules so a creation bypass does not also allow moving a release
    tag. Review any bypass roles; repository write access should not automatically
-   grant release authority. Public repositories support these rules on Free;
+   grant release authority. The production guard also requires GitHub's
+   `ref_protected` flag. This detects missing protection, not whether the configured
+   rules are strong enough; inspect the active rules and bypass list yourself.
+   Public repositories support these rules on Free;
    private repository rulesets require Pro, Team or Enterprise.
 7. Under **Settings → Actions → General**, use read-only default workflow
    permissions, leave workflow PR creation/approval disabled, and require approval
@@ -99,6 +109,10 @@ publishers and environments are not prerequisites for production publishing.
    untrusted tests; it is not approval to merge or publish. Keep release jobs free
    of repository secrets and restrict write/admin access to trusted maintainers.
    Use 2FA for maintainer accounts and review authorized apps/tokens as well.
+   The GitHub Release job explicitly requests `contents: write` with the built-in
+   `GITHUB_TOKEN`; no personal access token or write-enabled default is needed.
+   Organization policies must permit this job-level permission and the pinned
+   actions used by the workflow.
 
 For `pypi`, select release maintainers as Required reviewers and disable routine
 administrator bypass. A single maintainer can use explicit self-approval as a
@@ -145,7 +159,19 @@ are pinned to commit SHAs; review their updates as dependency changes.
    example `v0.1.0` for version `0.1.0`. The publish guard requires the exact
    `v<project.version>` tag, checks that checkout/tag/workflow identify the same
    commit, and verifies that commit belongs to `main`. An older main commit is
-   allowed; a branch or an unmerged commit is not.
+   allowed; a branch or an unmerged commit is not. This push **starts production**,
+   so finish the one-time settings before pushing the tag. For example, after
+   selecting the reviewed commit locally:
+
+   ```sh
+   git tag -a v0.1.0 -m "Release v0.1.0"
+   git push origin refs/tags/v0.1.0
+   ```
+
+   Push one release tag at a time using your authorized maintainer credentials.
+   GitHub does not trigger a new push workflow for tags pushed using a workflow's
+   `GITHUB_TOKEN`. Do not use a GitHub Release as a way to create the version tag;
+   this workflow creates the Release after verifying PyPI.
 
 Inspect the wheel and sdist under the `distributions` artifact before approving
 an upload. The artifact contains package files only, not verification logs.
@@ -161,19 +187,19 @@ or authentication setup, a TestPyPI rehearsal is recommended:
 gh workflow run publish.yml --ref v0.1.0 -f target=testpypi
 ```
 
-This runs the shared checks, uploads only to TestPyPI and verifies installation
+Pushing that tag also starts a production run. Leave its `pypi` approval pending
+while rehearsing; production and rehearsal do not block each other. If the
+rehearsal fails, investigate before approving production. The approval is the
+intentional hold point, not a programmatic TestPyPI dependency.
+
+The manual rehearsal runs the shared checks, uploads only to TestPyPI and verifies installation
 from TestPyPI. It never enters the production environment. A successful rehearsal
 validates the test publisher, not the production publisher's configuration.
 
-For a production release:
+The tag-push production run performs these steps in order, without contacting
+TestPyPI. Open **Actions → Publish** for that tag; no manual dispatch is needed:
 
-```sh
-gh workflow run publish.yml --ref v0.1.0 -f target=pypi
-```
-
-The production run performs these steps in order, without contacting TestPyPI:
-
-1. Reuse the existing full CI matrix at the workflow's commit.
+1. Run the reusable full CI matrix at the tagged commit (not a previous run's result).
 2. Build the sdist and wheel once for publication, then validate them using the
    existing `poe check-dist` entry point.
 3. Wait for the configured `pypi` environment approval. Inspect the selected
@@ -184,15 +210,23 @@ The production run performs these steps in order, without contacting TestPyPI:
    wheel. Install locked runtime dependencies separately from ordinary PyPI.
    Run the model, manual assembly and decorator examples outside the checkout,
    plus strict Pyright against the installed package.
+6. Create a GitHub Release for the existing tag with generated release notes and
+   the same wheel/sdist as assets. Native `gh release create --verify-tag` refuses
+   to create a missing tag. The project's PEP 440 version determines whether the
+   GitHub Release is marked as a prerelease, including development versions.
 
 Both paths verify the wheel downloaded from their selected index against the
 artifact built in that run. There is no cross-run or cross-index artifact reuse
-or hash comparison. Rehearse first when appropriate, then start production as a
-separate owner action; TestPyPI is not an automatic release gate.
+or hash comparison. Rehearse before approving production when appropriate;
+TestPyPI is not an automatic release gate.
 
 Build and verification jobs have no OIDC permission. Upload jobs have only
 `id-token: write`, download a specific artifact ID from the current run, and
-never check out or execute repository code. No PR event starts this workflow.
+never check out or execute repository code. The final GitHub Release job has
+only `contents: write`, no OIDC, and runs the native GitHub CLI without checking
+out repository code. It depends on successful PyPI verification; a failed,
+cancelled or skipped verification prevents release creation. No PR event starts
+this workflow.
 The environment and tag protections must also be configured: YAML checks do not
 replace GitHub access control.
 
@@ -226,7 +260,16 @@ overwritten, and deleting a release does not make those filenames reusable.
 
 There is no custom retry loop: if the index has not exposed an uploaded wheel yet,
 the verification job fails and can be rerun after checking the index. Failure of
-post-PyPI verification means **published, verification failed**, not rollback.
+post-PyPI verification means **published, verification failed**, not rollback;
+it also prevents GitHub Release creation. Rerun that failed verification (and its
+downstream Release job) rather than uploading again.
+
+If only GitHub Release creation fails, PyPI remains published and verified.
+Inspect the Releases page and any partial draft/assets before retrying only the
+failed job. The workflow does not overwrite an existing Release or clobber
+assets. If a Release already exists, reconcile its tag and assets manually;
+do not delete/recreate a version tag or repeat the PyPI upload. The native CLI
+handles release creation; this workflow adds no custom retry or replacement API.
 
 ## Before making this repository public
 
@@ -250,9 +293,12 @@ not a historical secret audit and does not change repository visibility.
 - [Creating a project with Trusted Publishing](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
 - [GitHub environment protection availability](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
 - [GitHub ruleset availability](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
+- [GitHub CLI release creation](https://cli.github.com/manual/gh_release_create)
+- [GitHub workflow trigger behavior](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)
 - [Using TestPyPI](https://packaging.python.org/en/latest/guides/using-testpypi/)
 
 The build/artifact/upload separation follows the same pattern used by
 [packaging](https://github.com/pypa/packaging/blob/main/.github/workflows/publish.yml)
 and [attrs](https://github.com/python-attrs/attrs/blob/main/.github/workflows/pypi-package.yml).
-Typebind uses manual dispatch to keep publication an explicit owner action.
+Typebind uses protected tag pushes to start production and environment approval
+to authorize upload; manual dispatch remains available for checks and rehearsals.

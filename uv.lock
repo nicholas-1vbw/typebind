@@ -935,6 +935,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "packaging" },
     { name = "poethepoet" },
     { name = "pyright" },
     { name = "pytest" },
@@ -957,6 +958,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "packaging", specifier = ">=25" },
     { name = "poethepoet", specifier = ">=0.48.0" },
     { name = "pyright", specifier = ">=1.1.400" },
     { name = "pytest", specifier = ">=8.4" },

@@ -1,26 +1,29 @@
 name: Publish
 
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       target:
-        description: Check artifacts only, rehearse on TestPyPI, or publish directly to PyPI
+        description: Check artifacts only or rehearse on TestPyPI
         type: choice
-        options: [check, testpypi, pypi]
+        options: [check, testpypi]
         default: check
         required: true
 
 permissions:
   contents: read
 
-# Do not interrupt an upload or allow concurrent releases to the same indexes.
+# Serialize each index without blocking a rehearsal behind production approval.
 concurrency:
-  group: publish
+  group: publish-${{ github.event_name == 'push' && 'pypi' || inputs.target }}
   cancel-in-progress: false
 
 jobs:
   check:
     name: Full release checks
+    if: github.event_name != 'push' || github.event.deleted == false
     uses: ./.github/workflows/ci.yml
 
   build:
@@ -29,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,7 +47,10 @@ jobs:
       - name: Sync locked dependencies
         run: uv sync --locked
       - name: Verify release tag, version and main ancestry
-        if: inputs.target != 'check'
+        id: release
+        if: github.event_name == 'push' || inputs.target == 'testpypi'
+        env:
+          RELEASE_REF_PROTECTED: ${{ github.ref_protected }}
         run: uv run --no-sync python scripts/check_release.py
       - name: Build wheel and sdist
         run: uv run --no-sync poe build --out-dir dist/release
@@ -62,7 +69,7 @@ jobs:
 
   testpypi:
     name: Upload to TestPyPI
-    if: inputs.target == 'testpypi'
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -110,7 +117,7 @@ jobs:
 
   pypi:
     name: Upload verified artifacts to PyPI
-    if: inputs.target == 'pypi'
+    if: github.event_name == 'push' && github.ref_type == 'tag' && github.ref_protected
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -150,3 +157,26 @@ jobs:
         run: >-
           uv run --no-sync poe check-dist --dist-dir dist/release
           --index-url https://pypi.org/simple/
+
+  github-release:
+    name: Create GitHub Release after PyPI verification
+    needs: [build, verify-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Only this job may create the release and attach distributions.
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: dist
+          merge-multiple: true
+      - name: Create release with verified distributions and generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: >-
+          gh release create "$RELEASE_TAG" dist/*.whl dist/*.tar.gz
+          --verify-tag --generate-notes --title "$RELEASE_TAG"
+          --prerelease="$PRERELEASE"
