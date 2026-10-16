@@ -102,6 +102,17 @@ class AliasedDocument(BaseModel):
     optional: RequestValue | None = None
 
 
+def test_multiple_model_parents_are_rejected() -> None:
+    class Left(DiscriminatedModel):
+        left: int
+
+    class Right(DiscriminatedModel):
+        right: int
+
+    with pytest.raises(TypeError, match="exactly one DiscriminatedModel parent"):
+        type("Combined", (Left, Right), {})
+
+
 def test_brackets_preserve_fields_and_types() -> None:
     query = Query(identifier="q", sequence=2, expression="hello")
     assert_type(query, Query)

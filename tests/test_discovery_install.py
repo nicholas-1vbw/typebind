@@ -9,9 +9,38 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(scope="module")
+def plugin_wheels(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """Build the shared plugin fixtures once, independent of the library version."""
+    uv = shutil.which("uv")
+    assert uv is not None, "The repository's uv toolchain must be on PATH"
+    root = Path(__file__).resolve().parents[1]
+    wheels = tmp_path_factory.mktemp("plugin-wheels")
+    for plugin in ("core", "extra"):
+        subprocess.run(
+            [
+                uv,
+                "build",
+                "--no-sources",
+                "--wheel",
+                str(root / "examples/plugins" / plugin),
+                "--out-dir",
+                str(wheels),
+            ],
+            cwd=root,
+            check=True,
+        )
+    return (
+        next(wheels.glob("typebind_example_core-*.whl")),
+        next(wheels.glob("typebind_example_extra-*.whl")),
+    )
+
+
 @pytest.mark.integration
 @pytest.mark.timeout(120)
-def test_installed_plugins_are_discovered_across_distributions(tmp_path: Path) -> None:
+def test_installed_plugins_are_discovered_across_distributions(
+    tmp_path: Path, plugin_wheels: tuple[Path, Path]
+) -> None:
     uv = shutil.which("uv")
     assert uv is not None, "The repository's uv toolchain must be on PATH"
     root = Path(__file__).resolve().parents[1]
@@ -22,19 +51,7 @@ def test_installed_plugins_are_discovered_across_distributions(tmp_path: Path) -
 
     wheels = tmp_path / "wheels"
     wheels.mkdir()
-    for plugin in ("core", "extra"):
-        run(
-            uv,
-            "build",
-            "--no-sources",
-            "--wheel",
-            str(root / "examples/plugins" / plugin),
-            "--out-dir",
-            str(wheels),
-            cwd=root,
-        )
-    first = next(wheels.glob("typebind_example_core-*.whl"))
-    second = next(wheels.glob("typebind_example_extra-*.whl"))
+    first, second = plugin_wheels
     environment = tmp_path / "environment"
     run(uv, "build", "--no-sources", "--wheel", "--out-dir", str(wheels), cwd=root)
     package_wheel = next(wheels.glob("typebind-*.whl"))

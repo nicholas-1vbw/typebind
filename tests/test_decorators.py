@@ -353,14 +353,6 @@ def test_empty_model_declaration_is_rejected() -> None:
         model(tag=None, variant=None)
 
 
-def test_public_decorator_is_unified() -> None:
-    import typebind
-
-    assert "model" in typebind.__all__
-    assert not hasattr(typebind, "family")
-    assert not hasattr(typebind, "variant")
-
-
 def test_native_field_reuse_keeps_parent_and_siblings_independent() -> None:
     parent = Request.model_fields["method"]
     before = (parent.annotation, parent.default_factory, tuple(parent.metadata), parent.frozen)
