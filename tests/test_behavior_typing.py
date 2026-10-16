@@ -35,6 +35,8 @@ INVALID = """
 UppercaseObject(Add(identifier="a", left=1, right=2))  # reject
 view.execute()  # reject
 runtime.adapt(upper, Describable).model.text  # reject
+runtime.adapt(upper, "Describable")  # reject
+runtime.adapt(upper, Describable | Executable)  # reject
 class BadResult(Implementation[Uppercase], Describable):
     def describe(self) -> int:  # reject
         return 1

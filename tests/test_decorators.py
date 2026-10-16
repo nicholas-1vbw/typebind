@@ -30,6 +30,12 @@ class Message(IdentityDiscriminatedModel):
         return self.identifier
 
 
+def test_decorator_reports_invalid_model_input() -> None:
+    with pytest.raises(TypeError, match="DiscriminatedModel class") as error:
+        model(tag="kind")(cast(Any, int))
+    assert repr(int) in str(error.value)
+
+
 @model(tag="method", variant="request")
 class Request(Message):
     sequence: int = 0

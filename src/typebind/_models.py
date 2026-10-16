@@ -361,7 +361,7 @@ class IdentityDiscriminatedModel(DiscriminatedModel):
 
 def _decorator_model(value: object) -> type[DiscriminatedModel]:
     if not isinstance(value, type) or not issubclass(value, DiscriminatedModel):
-        raise TypeError("Decorators require a DiscriminatedModel class")
+        raise TypeError(f"Decorators require a DiscriminatedModel class; got {value!r}")
     if value.__pydantic_generic_metadata__["parameters"]:
         raise TypeError(f"{_model_name(value)}: specialize explicit generic parameters first")
     return value
@@ -443,7 +443,7 @@ def _declared_discriminator(model: type[DiscriminatedModel]) -> str | None:
 
 
 def _branches(
-    variants: Iterable[type[DiscriminatedModel]],
+    variants: Iterable[object],
 ) -> dict[type[DiscriminatedModel], dict[str, type[DiscriminatedModel]]]:
     """Build a local dispatch table from leaf fields and native inheritance.
 
@@ -453,9 +453,15 @@ def _branches(
     raise ValueError. Open families and untagged models raise TypeError.
     """
     branches: dict[type[DiscriminatedModel], dict[str, type[DiscriminatedModel]]] = {}
-    for variant in dict.fromkeys(variants):
+    seen: set[type[DiscriminatedModel]] = set()
+    for variant in variants:
+        if not isinstance(variant, type) or not issubclass(variant, DiscriminatedModel):
+            raise TypeError(f"Expected a DiscriminatedModel variant class; got {variant!r}")
+        if variant in seen:
+            continue
+        seen.add(variant)
         if _open_discriminator(variant) is not None or not _tag_fields(variant):
-            raise TypeError(f"{variant.__name__} must be a tagged leaf model")
+            raise TypeError(f"{_model_name(variant)} must be a tagged leaf model")
         families = [
             base
             for base in reversed(variant.__mro__)
@@ -488,7 +494,7 @@ def family_base(family: object) -> type[DiscriminatedModel]:
     Require a model class; adapter construction separately requires an open tag.
     """
     if not isinstance(family, type) or not issubclass(family, DiscriminatedModel):
-        raise TypeError("family must be a DiscriminatedModel class")
+        raise TypeError(f"family must be a DiscriminatedModel class; got {family!r}")
     origin = family.__pydantic_generic_metadata__["origin"]
     if origin is not None and _open_discriminator(family) is not None:
         assert issubclass(origin, DiscriminatedModel)
@@ -510,13 +516,13 @@ def _union_for(
         or not issubclass(family, DiscriminatedModel)
         or _open_discriminator(family) is None
     ):
-        raise TypeError("Expected an open DiscriminatedModel family")
+        raise TypeError(f"Expected an open DiscriminatedModel family; got {family!r}")
     origin = family_base(family)
     discriminator = _open_discriminator(origin)
     assert discriminator is not None
     children = branches.get(origin)
     if not children:
-        raise ValueError(f"No variants supplied for {origin.__qualname__}")
+        raise ValueError(f"No variants supplied for {_model_name(origin)}")
     choices: list[Any] = [
         _union_for(child, branches) if _open_discriminator(child) is not None else child
         for child in children.values()

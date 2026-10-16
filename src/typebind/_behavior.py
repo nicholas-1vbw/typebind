@@ -13,7 +13,7 @@ from typing import (
     get_type_hints,
 )
 
-from typing_extensions import TypeForm, get_protocol_members, is_protocol
+from typing_extensions import get_protocol_members, is_protocol
 
 from ._models import DiscriminatedModel, concrete_model, family_base
 
@@ -60,7 +60,10 @@ def _implementation_model(implementation: type[Implementation[Any]]) -> type[Dis
             )
             if origin is Implementation:
                 if len(arguments) != 1:
-                    raise TypeError("Expected Implementation[ConcreteModel], not a bare base")
+                    raise TypeError(
+                        f"{_name(implementation)}: expected Implementation[ConcreteModel], "
+                        "not a bare base"
+                    )
                 targets.add(concrete_model(arguments[0]))
             elif issubclass(origin, Implementation):
                 parent = cast(type[Implementation[Any]], origin)
@@ -69,7 +72,9 @@ def _implementation_model(implementation: type[Implementation[Any]]) -> type[Dis
 
     visit(implementation, {})
     if len(targets) != 1:
-        raise TypeError("Expected exactly one concrete Implementation[Model] target")
+        raise TypeError(
+            f"{_name(implementation)}: expected exactly one concrete Implementation[Model] target"
+        )
     return next(iter(targets))
 
 
@@ -157,7 +162,7 @@ class BehaviorAdapter:
                     )
         self._factories = MappingProxyType(factories)
 
-    def adapt[I](self, model: DiscriminatedModel, interface: TypeForm[I]) -> I:
+    def adapt[I](self, model: DiscriminatedModel, interface: type[I]) -> I:
         """Bind an existing model to an interface; preserve the static interface type.
 
         The heterogeneous table was checked at assembly. This local cast restores
@@ -165,7 +170,7 @@ class BehaviorAdapter:
         trusted Python code, and their method signatures are checked statically.
         """
         try:
-            factory = self._factories[type(model), cast(type[object], interface)]
+            factory = self._factories[type(model), interface]
         except KeyError:
             raise LookupError(
                 f"No implementation in this scope for {_name(type(model))} / {interface!r}"
