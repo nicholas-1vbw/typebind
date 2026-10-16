@@ -271,16 +271,25 @@ def test_unknown_missing_tags_and_incomplete_variants() -> None:
         adapter.validate_python({"identifier": "x"})
     with pytest.raises(ValidationError, match="union_tag_invalid"):
         adapter.validate_python({"kind": "request", "method": "unknown"})
-    with pytest.raises(ValueError, match="No variants"):
+    with pytest.raises(ValueError, match="No variants") as error:
         build_adapter(Message[Any], variants=[])
-    with pytest.raises(TypeError, match="leaf"):
+    assert f"{Message.__module__}.{Message.__qualname__}" in str(error.value)
+    with pytest.raises(TypeError, match="leaf") as error:
         build_adapter(Message[Any], variants=[Request])
+    assert f"{Request.__module__}.{Request.__qualname__}" in str(error.value)
     specialized = Request[Literal["anonymous"]]
     anonymous_adapter = build_adapter(Message[Any], variants=[specialized])
     instance = specialized(identifier="a", sequence=1)
     assert (
         type(anonymous_adapter.validate_json(anonymous_adapter.dump_json(instance))) is specialized
     )
+
+
+@pytest.mark.parametrize("value", [int, "Query", {}])
+def test_invalid_variant_inputs_report_the_value(value: object) -> None:
+    with pytest.raises(TypeError, match="DiscriminatedModel variant class") as error:
+        bind_variants([cast(Any, value)])
+    assert repr(value) in str(error.value)
 
 
 def test_variant_bindings_are_explicit_independent_snapshots() -> None:
@@ -305,6 +314,25 @@ def test_variant_bindings_are_explicit_independent_snapshots() -> None:
     adapter = TypeAdapter(ExpandedDocument)
     adapter.rebuild(force=True)
     assert type(adapter.validate_python(data).primary) is Write
+
+
+def test_optional_family_binding_reports_the_correct_annotation() -> None:
+    binding = bind_variants([Query])
+    with pytest.raises(TypeError, match="open DiscriminatedModel family") as error:
+        TypeAdapter(Annotated[Message[Any] | None, binding])
+    assert repr(Message[Any] | None) in str(error.value)
+    assert "Annotated[Family[Any], binding] | None" in str(error.value)
+
+    class OptionalDocument(BaseModel):
+        primary: Annotated[Message[Any], binding] | None
+
+    adapter = TypeAdapter(OptionalDocument)
+    query = Query(identifier="q", sequence=1, expression="hello")
+    restored = adapter.validate_json(adapter.dump_json(OptionalDocument(primary=query)))
+    assert type(restored.primary) is Query
+    assert restored.primary == query
+    empty = OptionalDocument(primary=None)
+    assert adapter.validate_json(adapter.dump_json(empty)).primary is None
 
 
 def test_recursive_family_fields() -> None:
@@ -419,9 +447,10 @@ def test_unbound_containers_are_not_transparently_rewritten() -> None:
         primary: Message[Any]
         requests: list[Request[Any]]
 
-    with pytest.raises(TypeError, match="open DiscriminatedModel family"):
+    with pytest.raises(TypeError, match="open DiscriminatedModel family") as error:
         # Envelopes use TypeAdapter after explicitly binding their family fields.
         build_adapter(cast(Any, DynamicDocument), variants=[Query])
+    assert repr(DynamicDocument) in str(error.value)
 
 
 def test_discriminator_fields_require_validated_frozen_defaults() -> None:

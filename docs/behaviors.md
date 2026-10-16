@@ -89,8 +89,9 @@ explicitly inherit them. Orthogonal Protocols without a `model` member may coexi
 on implementations and are not registered as family-bound behaviors. Arbitrary
 structural matches, union/alias type-form
 objects as runtime interface keys, and automatic dependency injection are not
-part of this API. `TypeForm[I]` preserves the return type `I` in consumer code;
-it does not statically correlate the two arguments' families. The internal
+part of this API. The `type[I]` parameter preserves the return type `I` in consumer
+code and rejects string and union arguments; it does not statically correlate
+the two arguments' families. The internal
 heterogeneous lookup uses a local cast after assembly checks. Generic field
 access and method signatures remain statically checked, including wrong-family
 implementation declarations. No `cast` is needed by consumers.

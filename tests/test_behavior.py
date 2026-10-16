@@ -215,8 +215,9 @@ def test_non_implementation_class_is_rejected() -> None:
 
 @pytest.mark.parametrize("bare", [Implementation, type("Bare", (Implementation,), {})])
 def test_unspecialized_implementation_is_rejected(bare: type[object]) -> None:
-    with pytest.raises(TypeError, match=r"Implementation\["):
+    with pytest.raises(TypeError, match=r"Implementation\[") as error:
         assemble(variants=[], implementations=[cast(Any, bare)])
+    assert f"{bare.__module__}.{bare.__qualname__}" in str(error.value)
 
 
 def test_abstract_and_invalid_declarations() -> None:
@@ -246,8 +247,10 @@ def test_abstract_and_invalid_declarations() -> None:
         @property
         def model(self) -> int: ...
 
-    with pytest.raises(TypeError, match="DiscriminatedModel"):
+    with pytest.raises(TypeError, match="DiscriminatedModel") as error:
         assemble(variants=[], implementations=[], required_interfaces=[BadReturn])
+    assert repr(int) in str(error.value)
+    assert "BadReturn.model" in error.value.__notes__[-1]
 
 
 def test_wrong_family_from_untyped_plugin() -> None:
