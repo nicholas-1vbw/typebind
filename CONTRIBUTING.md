@@ -15,7 +15,10 @@ uv run --no-sync poe check
 ```
 
 uv installs the Python version selected by `.python-version` when needed. The
-root development group includes the two local plugin examples. No package-index
+repository is a uv workspace: `typebind` is the root package, and the two plugin
+examples under `examples/plugins/` are members. They share the root `uv.lock` and
+`.venv`. The root development group depends on both example packages, so
+`uv sync --locked` installs all three packages as editable sources. No package-index
 credentials, publishing permissions or application secrets are needed.
 
 `poe check` runs formatting, lint, strict Pyright, tests, runnable examples,
@@ -49,10 +52,11 @@ usage acceptance checks; documentation prose is reviewed, not parsed by tests.
 
 Example packages belong to this checkout and must use its current source, not an
 independently selected typebind release. Their dependency metadata declares
-package relationships without version constraints. Root uv source configuration
-selects the local examples during development; the integration test installs the
-library and plugin wheels built from this checkout and verifies their installation
-origins. Changing the main package version does not require bumping the examples'
+package relationships without version constraints. Root `tool.uv.sources`
+configuration resolves dependencies between members to their workspace sources
+during development; the integration test installs the library and plugin wheels
+built from this checkout and verifies their installation origins. Changing the
+main package version does not require bumping the examples'
 own versions. Git retains the target `x.y.z` version; release preparation writes
 the full candidate version only into the CI working copy, as described in
 [Releasing](docs/releasing.md#prepare-and-check-a-candidate). Prerelease candidates

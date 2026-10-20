@@ -49,14 +49,27 @@ limitations and recursive fields.
 
 ## Cross-package discovery
 
-The root development group installs two local example distributions through
-`tool.uv.sources` path sources. They are not runtime dependencies of `typebind`
-and are not included in its wheel. They share the root lockfile.
+The two plugin distributions are uv workspace members alongside the root
+`typebind` package. The root development group installs both plugins, and
+`tool.uv.sources` resolves dependencies between all three packages to editable
+workspace sources. They share the root `uv.lock` and `.venv`. The plugins are not
+runtime dependencies of `typebind` and are not included in its wheel. The other
+examples remain scripts rather than separate workspace packages.
 
 | Distribution | Contents |
 | --- | --- |
 | [typebind-example-core](plugins/core/pyproject.toml) | Defines the `Message` / `Request` and `Template` families and interfaces; publishes `Query`, `BasicTemplate` and `QueryObject` |
 | [typebind-example-extra](plugins/extra/pyproject.toml) | Publishes `Write(Request[Literal["write"]])` and `WriteObject`, importing the shared contract from core |
+
+To run a command with a particular member's dependencies, select it with
+`--package`, for example from the repository root:
+
+```sh
+uv run --locked --package typebind-example-extra python -c "import typebind_example_extra"
+```
+
+This uses the shared environment rather than creating an isolated environment for
+the member.
 
 The core package uses `IdentityDiscriminatedModel` for messages and
 `DiscriminatedModel` for templates, demonstrating that discovery accepts both.
