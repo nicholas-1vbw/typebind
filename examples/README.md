@@ -7,7 +7,7 @@ behavior assembly and optional plugin discovery. API contracts live in the
 
 ## Run an example
 
-Use a repository checkout and the uv version specified by `tool.uv.required-version`
+Use a repository checkout and a uv version satisfying `tool.uv.required-version`
 in [pyproject.toml](../pyproject.toml). See [development setup](../CONTRIBUTING.md#set-up-and-run-checks)
 for uv installation. Run `uv sync --locked` from the repository root to prepare
 the locked development environment, then run the commands below from that directory.

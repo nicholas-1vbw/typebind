@@ -2,10 +2,10 @@
 
 ## Set up and run checks
 
-Fork the repository and create a branch from `main`. Install the uv version
-specified by `tool.uv.required-version` in [pyproject.toml](pyproject.toml), using
+Fork the repository and create a branch from `main`. Install a uv version
+satisfying `tool.uv.required-version` in [pyproject.toml](pyproject.toml), using
 [uv's installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
-Do not relax that requirement to use a different local tool version.
+Patch releases within that range are supported.
 
 From the checkout root:
 
@@ -132,9 +132,11 @@ preinstalled tools. This is not a bit-for-bit frozen VM.
 
 The Python compatibility matrix intentionally follows current patch releases of
 3.12 through 3.15. Local development and publishing select `.python-version`.
-`pyproject.toml` fixes uv and the release build-backend constraint; `uv.lock`
-selects development and runtime dependencies. Third-party Actions use commit
-SHAs. actionlint has a fixed Go module version. Go, Git, shell utilities and the
+`pyproject.toml` declares the supported uv range and pins the release build-backend
+constraint; `uv.lock` selects development and runtime dependencies. CI and
+publishing use `setup-uv` to select the latest uv release within that range.
+Third-party Actions use commit SHAs. actionlint has a fixed Go module version.
+Go, Git, shell utilities and the
 GitHub CLI are runner-provided tooling, deliberately updated with the image;
 they are not claimed to be pinned or covered by the Python lock audit.
 
@@ -143,8 +145,8 @@ updates remain separate. Security updates are not delayed by that version-update
 group. Review the diff and require the full CI checks before merging.
 
 Python Dependabot is not enabled yet: the inspected updater source
-uses uv 0.12.19, while this project's required uv is 0.13.0. This source inspection
-is not a successful hosted updater test. Keep the project pin; do not add a second
+uses uv 0.12.19, outside this project's required uv range. This source inspection
+is not a successful hosted updater test. Keep the declared range; do not add a second
 lockfile or weaken the toolchain to accommodate a bot. Until a hosted updater can
 resolve the local example sources with the required uv, maintainers update Python
 dependencies in ordinary PRs:

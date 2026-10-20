@@ -30,7 +30,7 @@ requires = ["uv_build>=0.13.0,<0.14"]
 build-backend = "uv_build"
 
 [tool.uv]
-required-version = "==0.13.0"
+required-version = ">=0.13.0,<0.14"
 build-constraint-dependencies = ["uv_build==0.13.0"]
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*" }, { file = "README.md" }, { file = "LICENSE" }]
 
