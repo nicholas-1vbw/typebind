@@ -3,7 +3,11 @@ revision = 5
 requires-python = ">=3.12"
 
 [manifest]
-build-constraints = [{ name = "uv-build", specifier = "==0.13.0" }]
+members = [
+    "typebind",
+    "typebind-example-core",
+    "typebind-example-extra",
+]
 
 [[package]]
 name = "annotated-types"
@@ -1304,7 +1308,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "typebind" }]
+requires-dist = [{ name = "typebind", editable = "." }]
 
 [[package]]
 name = "typebind-example-extra"
@@ -1317,8 +1321,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "typebind" },
-    { name = "typebind-example-core" },
+    { name = "typebind", editable = "." },
+    { name = "typebind-example-core", editable = "examples/plugins/core" },
 ]
 
 [[package]]

@@ -2,10 +2,10 @@
 
 ## Set up and run checks
 
-Fork the repository and create a branch from `main`. Install the uv version
-specified by `tool.uv.required-version` in [pyproject.toml](pyproject.toml), using
+Fork the repository and create a branch from `main`. Install a uv version
+satisfying `tool.uv.required-version` in [pyproject.toml](pyproject.toml), using
 [uv's installation instructions](https://docs.astral.sh/uv/getting-started/installation/).
-Do not relax that requirement to use a different local tool version.
+Patch releases within that range are supported.
 
 From the checkout root:
 
@@ -15,7 +15,10 @@ uv run --no-sync poe check
 ```
 
 uv installs the Python version selected by `.python-version` when needed. The
-root development group includes the two local plugin examples. No package-index
+repository is a uv workspace: `typebind` is the root package, and the two plugin
+examples under `examples/plugins/` are members. They share the root `uv.lock` and
+`.venv`. The root development group depends on both example packages, so
+`uv sync --locked` installs all three packages as editable sources. No package-index
 credentials, publishing permissions or application secrets are needed.
 
 `poe check` runs formatting, lint, strict Pyright, tests, runnable examples,
@@ -49,10 +52,11 @@ usage acceptance checks; documentation prose is reviewed, not parsed by tests.
 
 Example packages belong to this checkout and must use its current source, not an
 independently selected typebind release. Their dependency metadata declares
-package relationships without version constraints. Root uv source configuration
-selects the local examples during development; the integration test installs the
-library and plugin wheels built from this checkout and verifies their installation
-origins. Changing the main package version does not require bumping the examples'
+package relationships without version constraints. Root `tool.uv.sources`
+configuration resolves dependencies between members to their workspace sources
+during development; the integration test installs the library and plugin wheels
+built from this checkout and verifies their installation origins. Changing the
+main package version does not require bumping the examples'
 own versions. Git retains the target `x.y.z` version; release preparation writes
 the full candidate version only into the CI working copy, as described in
 [Releasing](docs/releasing.md#prepare-and-check-a-candidate). Prerelease candidates
@@ -128,9 +132,12 @@ preinstalled tools. This is not a bit-for-bit frozen VM.
 
 The Python compatibility matrix intentionally follows current patch releases of
 3.12 through 3.15. Local development and publishing select `.python-version`.
-`pyproject.toml` fixes uv and the release build-backend constraint; `uv.lock`
-selects development and runtime dependencies. Third-party Actions use commit
-SHAs. actionlint has a fixed Go module version. Go, Git, shell utilities and the
+`pyproject.toml` declares the supported uv CLI range in `tool.uv.required-version`
+and the build-backend range in `build-system.requires`. Both allow compatible patch
+releases. `uv.lock` selects development and runtime dependencies. CI and publishing
+use `setup-uv` to select the latest uv release within the CLI range.
+Third-party Actions use commit SHAs. actionlint has a fixed Go module version.
+Go, Git, shell utilities and the
 GitHub CLI are runner-provided tooling, deliberately updated with the image;
 they are not claimed to be pinned or covered by the Python lock audit.
 
@@ -139,8 +146,8 @@ updates remain separate. Security updates are not delayed by that version-update
 group. Review the diff and require the full CI checks before merging.
 
 Python Dependabot is not enabled yet: the inspected updater source
-uses uv 0.12.19, while this project's required uv is 0.13.0. This source inspection
-is not a successful hosted updater test. Keep the project pin; do not add a second
+uses uv 0.12.19, outside this project's required uv range. This source inspection
+is not a successful hosted updater test. Keep the declared range; do not add a second
 lockfile or weaken the toolchain to accommodate a bot. Until a hosted updater can
 resolve the local example sources with the required uv, maintainers update Python
 dependencies in ordinary PRs:
@@ -168,8 +175,8 @@ findings for affected code paths and environments, and review new dependency ris
 when updating dependencies. A failed advisory query is not a vulnerability finding.
 An unresolved risk relevant to the release must be addressed before approving its
 upload; an unrelated development-dependency advisory is not an automatic release veto.
-The audit does not cover local project code, Actions, runner tools or the separate
-build-backend constraint. Review backend advisories when upgrading the toolchain.
+The audit does not cover local project code, Actions, runner tools or the build
+backend. Review backend advisories when upgrading the toolchain.
 Security fixes still require review and tests; the audit does not update packages.
 Run it from Actions → Dependency audit → Run workflow, selecting `main`, or use
 `gh workflow run audit.yml --ref main`. The workflow must exist on the default
