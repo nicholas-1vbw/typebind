@@ -132,9 +132,10 @@ preinstalled tools. This is not a bit-for-bit frozen VM.
 
 The Python compatibility matrix intentionally follows current patch releases of
 3.12 through 3.15. Local development and publishing select `.python-version`.
-`pyproject.toml` declares the supported uv range and pins the release build-backend
-constraint; `uv.lock` selects development and runtime dependencies. CI and
-publishing use `setup-uv` to select the latest uv release within that range.
+`pyproject.toml` declares the supported uv CLI range in `tool.uv.required-version`
+and the build-backend range in `build-system.requires`. Both allow compatible patch
+releases. `uv.lock` selects development and runtime dependencies. CI and publishing
+use `setup-uv` to select the latest uv release within the CLI range.
 Third-party Actions use commit SHAs. actionlint has a fixed Go module version.
 Go, Git, shell utilities and the
 GitHub CLI are runner-provided tooling, deliberately updated with the image;
@@ -174,8 +175,8 @@ findings for affected code paths and environments, and review new dependency ris
 when updating dependencies. A failed advisory query is not a vulnerability finding.
 An unresolved risk relevant to the release must be addressed before approving its
 upload; an unrelated development-dependency advisory is not an automatic release veto.
-The audit does not cover local project code, Actions, runner tools or the separate
-build-backend constraint. Review backend advisories when upgrading the toolchain.
+The audit does not cover local project code, Actions, runner tools or the build
+backend. Review backend advisories when upgrading the toolchain.
 Security fixes still require review and tests; the audit does not update packages.
 Run it from Actions → Dependency audit → Run workflow, selecting `main`, or use
 `gh workflow run audit.yml --ref main`. The workflow must exist on the default

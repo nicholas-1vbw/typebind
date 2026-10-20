@@ -8,7 +8,6 @@ members = [
     "typebind-example-core",
     "typebind-example-extra",
 ]
-build-constraints = [{ name = "uv-build", specifier = "==0.13.0" }]
 
 [[package]]
 name = "annotated-types"
