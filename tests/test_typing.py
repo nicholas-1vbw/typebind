@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal, assert_type
 from pydantic import BaseModel, TypeAdapter
 from typebind import (
     DiscriminatedModel, IdentityDiscriminatedModel, bind_variants, build_adapter, tag_field,
-    validate_kebab_case,
+    validate_kebab_case, validate_regex,
 )
 from typebind import DiscoveredVariant, discover_variants, select_variants
 
@@ -24,7 +24,7 @@ class Message[Kind: str](DiscriminatedModel):
     identifier: str
 
 class Request[Method: str](Message[Literal["request"]]):
-    method: Method = tag_field()
+    method: Method = tag_field(validator=validate_regex(r"[a-z]+"))
     sequence: int
 
 type QueryTag = Literal["query"]
@@ -162,6 +162,8 @@ discover_variants(groups={1})
 DiscoveredVariant(Document, discovered[0].entry_point)
 tag_field(validator="CamelCase")
 tag_field(validator=lambda value: True)
+validate_regex(123)
+validate_regex(r"[a-z]+", flags="i")
 """
 
 
@@ -170,13 +172,14 @@ from typing import Annotated, assert_type
 from pydantic import BaseModel, TypeAdapter
 from typebind import (
     IdentityDiscriminatedModel, model, build_adapter, bind_variants, validate_snake_case,
+    validate_regex,
 )
 
 @model(tag="kind", validator=validate_snake_case)
 class Message(IdentityDiscriminatedModel):
     identifier: str
 
-@model(tag="method", variant="request")
+@model(tag="method", variant="request", validator=validate_regex(r"[a-z]+"))
 class Request(Message):
     sequence: int
 

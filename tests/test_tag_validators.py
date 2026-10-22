@@ -1,5 +1,6 @@
 """Check naming rules and their ownership across native and decorated families."""
 
+import re
 from collections.abc import Callable
 from typing import Any, Literal, assert_type
 
@@ -15,6 +16,7 @@ from typebind import (
     validate_camel_case,
     validate_kebab_case,
     validate_pascal_case,
+    validate_regex,
     validate_snake_case,
 )
 
@@ -52,6 +54,58 @@ def test_builtin_naming_rules(
     for value in (*invalid, "", " ", "1User", "user created", "Query\n", "query\n", "é", "用户"):
         with pytest.raises(ValueError, match="expected ASCII"):
             validator(value)
+
+
+@pytest.mark.parametrize(
+    "pattern, valid, invalid",
+    [
+        (
+            r"cmd-[a-z]+",
+            "cmd-query",
+            ("query", "prefix-cmd-query", "cmd-query-extra", "cmd-query\n"),
+        ),
+        (r"/a/g", "/a/g", ("a", "/a/g/")),
+    ],
+)
+def test_regex_factory_requires_a_full_match(
+    pattern: str, valid: str, invalid: tuple[str, ...]
+) -> None:
+    validator = validate_regex(pattern)
+    assert_type(validator, Callable[[str], None])
+    assert validator(valid) is None
+    for value in invalid:
+        with pytest.raises(ValueError, match="expected a full match for regex") as error:
+            validator(value)
+        assert repr(pattern) in str(error.value)
+
+
+def test_regex_factory_reports_invalid_patterns_when_created() -> None:
+    with pytest.raises(re.error):
+        validate_regex(r"[")
+
+
+def test_regex_flags_work_with_both_declarations_without_normalizing_values() -> None:
+    validate_event = validate_regex(r"event\.[a-z]+", flags=re.IGNORECASE)
+
+    @model(tag="kind", validator=validate_event)
+    class Event(DiscriminatedModel):
+        pass
+
+    @model(variant="EVENT.created")
+    class Created(Event):
+        pass
+
+    class TypedEvent[Kind: str](DiscriminatedModel):
+        kind: Kind = tag_field(validator=validate_event)
+
+    class TypedCreated(TypedEvent[Literal["EVENT.created"]]):
+        pass
+
+    assert Created().model_dump() == TypedCreated().model_dump() == {"kind": "EVENT.created"}
+    with pytest.raises(ValueError, match="kind: invalid variant 'event_created'.*full match"):
+        model(variant="event_created")(Event)
+    with pytest.raises(ValueError, match="kind: invalid variant 'event_created'.*full match"):
+        TypedEvent[Literal["event_created"]]
 
 
 @pytest.mark.parametrize("defer_build", [False, True])

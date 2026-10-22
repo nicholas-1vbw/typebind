@@ -66,7 +66,8 @@ Import public APIs from `typebind`; underscore-prefixed modules are internal.
 Family authors can constrain variant values with `@model(tag="kind", validator=validate_kebab_case)`
 or `tag_field(validator=validate_kebab_case)`. See
 [variant validation](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#family-owned-variant-validation)
-for the four built-in naming rules and custom validation functions.
+for the four built-in naming rules, the `validate_regex` factory, and custom
+validation functions.
 
 The [`@model` decorator](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#decorator-declarations)
 preserves static checking for declared fields such as `identifier` and `expression`.

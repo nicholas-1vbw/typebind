@@ -267,6 +267,38 @@ allow single-letter names. Kebab and snake rules reject leading, trailing and
 repeated separators. Camel and Pascal rules allow uppercase acronyms but reject
 separators; they do not infer word boundaries.
 
+For a regular expression, `validate_regex(pattern, *, flags=0)` creates a
+validator with the same callable contract:
+
+```python
+import re
+
+from typebind import validate_regex
+
+
+validate_event_name = validate_regex(r"event\.[a-z]+", flags=re.IGNORECASE)
+
+
+@model(tag="kind", validator=validate_event_name)
+class NamespacedEvent(DiscriminatedModel):
+    pass
+```
+
+This accepts `"event.created"` and `"EVENT.created"` without changing their case,
+and rejects `"event_created"` or `"prefix-event.created"`. The same function can
+be passed to `tag_field(validator=validate_event_name)` in an explicit generic
+family. Patterns use Python's `re` syntax and optional integer flags such as
+`re.IGNORECASE`. Slashes are literal characters: `validate_regex(r"/a/g")`
+matches the text `"/a/g"`, whereas `validate_regex(r"a")` requires `"a"`.
+JavaScript regex delimiters and the `g` flag are not interpreted.
+
+The factory compiles the pattern immediately, so invalid patterns raise the
+native `re.error` before any variant is declared. The returned validator uses
+`fullmatch`, requiring the entire value to match, and raises `ValueError` on a
+mismatch. Reusing it reuses the compiled pattern. The family's existing
+non-empty-string requirement still applies even when a pattern accepts empty
+strings.
+
 Custom rules use the same interface and can call the built-in functions:
 
 ```python

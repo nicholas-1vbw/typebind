@@ -21,6 +21,7 @@ from ._validators import (
     validate_camel_case,
     validate_kebab_case,
     validate_pascal_case,
+    validate_regex,
     validate_snake_case,
 )
 
@@ -43,5 +44,6 @@ __all__ = [
     "validate_camel_case",
     "validate_kebab_case",
     "validate_pascal_case",
+    "validate_regex",
     "validate_snake_case",
 ]
