@@ -63,6 +63,11 @@ print(wire.decode())  # {"kind":"query","identifier":"q","expression":"hello"}
 use [`bind_variants`](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#consumer-types).
 Import public APIs from `typebind`; underscore-prefixed modules are internal.
 
+Family authors can constrain variant values with `@model(tag="kind", validator=validate_kebab_case)`
+or `tag_field(validator=validate_kebab_case)`. See
+[variant validation](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#family-owned-variant-validation)
+for the four built-in naming rules and custom validation functions.
+
 The [`@model` decorator](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#decorator-declarations)
 preserves static checking for declared fields such as `identifier` and `expression`.
 Generated tag attributes such as `kind` are runtime-only: Pyright does not see

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from inspect import isabstract
 from typing import Annotated, Any, ClassVar, Literal, Self, TypeVar, cast
 
@@ -23,6 +24,15 @@ from pydantic_core import CoreSchema, core_schema
 _DECORATED_TAG = object()
 
 
+@dataclass(frozen=True)
+class _TagValidator:
+    validate: Callable[[str], None]
+
+
+def _tag_validator(field: FieldInfo) -> Callable[[str], None] | None:
+    return next((item.validate for item in field.metadata if isinstance(item, _TagValidator)), None)
+
+
 def _decorated_field(field: FieldInfo) -> bool:
     return any(item is _DECORATED_TAG for item in field.metadata)
 
@@ -37,7 +47,7 @@ def _tag_default() -> object:
     )
 
 
-def tag_field() -> Any:
+def tag_field(*, validator: Callable[[str], None] | None = None) -> Any:
     """Declare this level's discriminator as a native frozen Pydantic field.
 
     The private default factory identifies tag fields after native field merging
@@ -46,11 +56,20 @@ def tag_field() -> Any:
     DiscriminatedModel keeps native unset semantics; IdentityDiscriminatedModel
     additionally marks bound tags as set through Pydantic's public validator API.
 
+    ``validator`` belongs to this family and checks bound variant values during
+    declaration and assembly. It must return None or raise ValueError, without
+    modifying the value. It is not an instance-time Pydantic field validator.
+
     Like Pydantic's Field, this helper returns Any for assignment to a typed
     field. The explicit annotation owns the field and constructor argument types;
     the assigned default makes the argument optional to static type checkers.
     """
-    return Field(default_factory=_tag_default, frozen=True)
+    if validator is not None and not callable(validator):
+        raise TypeError("validator must be a callable accepting a string, or None")
+    field = cast(FieldInfo, Field(default_factory=_tag_default, frozen=True))
+    if validator is not None:
+        field.metadata.append(_TagValidator(validator))
+    return field
 
 
 def _model_name(model: type[BaseModel]) -> str:
@@ -94,6 +113,20 @@ def _literal_tag(model: type[DiscriminatedModel], name: str) -> str:
     if schema["type"] == "literal" and len(schema["expected"]) == 1:
         value: object = schema["expected"][0]
         if isinstance(value, str) and value:
+            validator = _tag_validator(model.model_fields[name])
+            if validator is not None:
+                try:
+                    result = cast(Callable[[str], object], validator)(value)
+                except ValueError as error:
+                    raise ValueError(
+                        f"{_model_name(model)}.{name}: invalid variant {value!r}: {error}"
+                    ) from error
+                if result is not None:
+                    raise TypeError(
+                        f"{_model_name(model)}.{name}: validator for variant {value!r} "
+                        "must return None or raise ValueError; "
+                        f"got {type(result).__name__}"
+                    )
             return value
     raise TypeError(
         f"{_model_name(model)}.{name}: a tag must be a single non-empty string Literal; "
@@ -215,6 +248,15 @@ class DiscriminatedModel(BaseModel):
                 "Inherit from one family and use ordinary mixins for shared behavior."
             )
         parent = parents[0]
+        inherited_fields = _tag_fields(parent)
+        for name, field in inherited_fields.items():
+            if name in cls.model_fields and _tag_validator(cls.model_fields[name]) is not (
+                _tag_validator(field)
+            ):
+                raise TypeError(
+                    f"{_model_name(cls)}.{name}: cannot override the inherited tag validator "
+                    f"from {_model_name(parent)}; the family declaring the field owns its rule"
+                )
         metadata = cls.__pydantic_generic_metadata__
         origin = metadata["origin"]
         if origin is not None:
@@ -242,7 +284,6 @@ class DiscriminatedModel(BaseModel):
                 f"from {_model_name(family)} is still open. "
                 f"Inherit from {family.__name__}[Literal['tag']] to select its discriminator."
             )
-        inherited_fields = _tag_fields(parent)
         for name in inherited_fields:
             if name not in cls.model_fields:
                 raise TypeError(
@@ -381,19 +422,27 @@ def _extend[T: DiscriminatedModel](model: type[T], fields: dict[str, Any]) -> ty
 
 
 def model[T: DiscriminatedModel](
-    *, tag: str | None = None, variant: str | None = None
+    *,
+    tag: str | None = None,
+    variant: str | None = None,
+    validator: Callable[[str], None] | None = None,
 ) -> Callable[[type[T]], type[T]]:
     """Bind a parent variant, introduce a tag field, or do both at declaration time.
 
     ``variant`` is the value of the inherited open discriminator; ``tag`` is the
     name of a new open string field on this level. At least one is required.
     Both together bind the parent first, then introduce the next family.
+    ``validator`` requires ``tag`` and checks future values of that new field;
+    the parent family's validator checks ``variant``. See ``tag_field`` for the
+    callable contract.
 
     Ordinary fields and methods retain their static types. Generated tag fields
     are runtime-only; no generic parameter, stub or whole-model Any is introduced.
     Finalized fields own tags and defaults. Assembly checks cross-type conflicts;
     construction performs no decorator reflection or routing work.
     """
+    if validator is not None and tag is None:
+        raise ValueError("validator requires tag= to declare a new family field")
     if tag is None and variant is None:
         raise ValueError("@model requires at least one of tag or variant")
     if tag is not None and (
@@ -424,7 +473,7 @@ def model[T: DiscriminatedModel](
                     f"{_model_name(cls)}.{tag}: discriminator conflicts with "
                     "an existing field or attribute"
                 )
-            field = cast(FieldInfo, tag_field())
+            field = cast(FieldInfo, tag_field(validator=validator))
             field.metadata.append(_DECORATED_TAG)
             fields[tag] = (str, field)
         return _extend(cls, fields)

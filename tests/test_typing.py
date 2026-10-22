@@ -12,6 +12,7 @@ from typing import Annotated, Any, Literal, assert_type
 from pydantic import BaseModel, TypeAdapter
 from typebind import (
     DiscriminatedModel, IdentityDiscriminatedModel, bind_variants, build_adapter, tag_field,
+    validate_kebab_case,
 )
 from typebind import DiscoveredVariant, discover_variants, select_variants
 
@@ -19,7 +20,7 @@ from typebind import DiscoveredVariant, discover_variants, select_variants
 assert issubclass(IdentityDiscriminatedModel, DiscriminatedModel)
 
 class Message[Kind: str](DiscriminatedModel):
-    kind: Kind = tag_field()
+    kind: Kind = tag_field(validator=validate_kebab_case)
     identifier: str
 
 class Request[Method: str](Message[Literal["request"]]):
@@ -159,15 +160,19 @@ select_variants(discovered, family=Message[Any], extra_variants=[Document])
 select_variants(discovered, family=Message[Any], extra_variants=[query])
 discover_variants(groups={1})
 DiscoveredVariant(Document, discovered[0].entry_point)
+tag_field(validator="CamelCase")
+tag_field(validator=lambda value: True)
 """
 
 
 DECORATOR_SOURCE = """\
 from typing import Annotated, assert_type
 from pydantic import BaseModel, TypeAdapter
-from typebind import IdentityDiscriminatedModel, model, build_adapter, bind_variants
+from typebind import (
+    IdentityDiscriminatedModel, model, build_adapter, bind_variants, validate_snake_case,
+)
 
-@model(tag="kind")
+@model(tag="kind", validator=validate_snake_case)
 class Message(IdentityDiscriminatedModel):
     identifier: str
 
@@ -212,6 +217,8 @@ model(variant="query")(object)
 model(tag="method", variant=123)
 model(tag=123)
 model("kind")
+model(tag="kind", validator="CamelCase")
+model(tag="kind", validator=lambda value: value.lower())
 """
 
 
