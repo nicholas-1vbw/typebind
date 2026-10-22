@@ -180,8 +180,9 @@ that distinction matters. Custom class-construction side effects may run again
 for the native generated subclass; typebind adds no custom metaclass.
 
 The generated fields are the single source of discriminator names and Literal
-values. Field metadata only marks the declaration style, allowing the original
-subclass to exist before decoration. It contains no copied tag names/values.
+values. Field metadata marks the declaration style, allowing the original
+subclass to exist before decoration, and carries an optional family-owned
+variant validator. It contains no copied tag names/values.
 An accidentally undecorated subclass retains an open discriminator and is
 rejected as a leaf at adapter/behavior assembly. Explicit generic declarations
 keep their earlier declaration-time diagnostics. Introducing another level
@@ -199,6 +200,126 @@ Forms can coexist: a decorated family can extend a bound explicit parent such as
 `Message[Literal["request"]]`, and an explicit generic family can extend a bound
 decorated leaf. An unbound explicit generic must first be specialized with native
 `[Literal[...]]`; decorators do not replace Pydantic's generic specialization.
+
+## Family-owned variant validation
+
+The family that introduces a tag field can constrain the values its variants
+bind. Pass a function through `validator=` when declaring that field:
+
+```python
+from typebind import DiscriminatedModel, model, validate_kebab_case
+
+
+@model(tag="kind", validator=validate_kebab_case)
+class Event(DiscriminatedModel):
+    pass
+
+
+@model(variant="user-created")
+class UserCreated(Event):
+    pass
+```
+
+`UserCreated` passes the family's rule during declaration. Declaring a variant
+with `variant="user_created"` would raise `ValueError`, identifying the model,
+field, rejected value and the validator's reason. The rule constrains variant
+**values**, not the name of the `kind` field. Without a validator, any non-empty
+string remains a valid variant value.
+
+Explicit generic families use the same mechanism through `tag_field`:
+
+```python
+from typing import Literal
+
+from typebind import tag_field
+
+
+class TypedEvent[Kind: str](DiscriminatedModel):
+    kind: Kind = tag_field(validator=validate_kebab_case)
+
+
+class TypedUserCreated(TypedEvent[Literal["user-created"]]):
+    pass
+```
+
+The callable contract is `Callable[[str], None]`: return `None` on success or
+raise `ValueError` with a reason on failure. Returning a boolean or a replacement
+string raises `TypeError`; values are never normalized. The original
+`ValueError` is retained as the cause of the contextual declaration error.
+Other callback exceptions propagate. Use synchronous, deterministic functions
+without side effects: declaration, adapter assembly and schema rebuilds can
+check a value more than once. Typebind does not install these callbacks as
+instance validators. Concrete models and adapters continue to validate input
+against their fixed `Literal` tags; an unspecialized family's input values do
+not pass through this declaration rule.
+
+These four optional functions are exported from `typebind`:
+
+| Function | Accepted format | Examples |
+| --- | --- | --- |
+| `validate_kebab_case` | Starts with `a-z`; lowercase letters and digits, optionally separated by single `-` characters | `user-created`, `query-v2`, `v2-3` |
+| `validate_snake_case` | Starts with `a-z`; lowercase letters and digits, optionally separated by single `_` characters | `user_created`, `query_v2`, `v2_3` |
+| `validate_camel_case` | Starts with `a-z`, followed by letters and digits | `userCreated`, `queryV2`, `userID` |
+| `validate_pascal_case` | Starts with `A-Z`, followed by letters and digits | `UserCreated`, `QueryV2`, `HTTPServer` |
+
+All four rules use ASCII characters, reject whitespace and empty strings, and
+allow single-letter names. Kebab and snake rules reject leading, trailing and
+repeated separators. Camel and Pascal rules allow uppercase acronyms but reject
+separators; they do not infer word boundaries.
+
+For a regular expression, `validate_regex(pattern, *, flags=0)` creates a
+validator with the same callable contract:
+
+```python
+import re
+
+from typebind import validate_regex
+
+
+validate_event_name = validate_regex(r"event\.[a-z]+", flags=re.IGNORECASE)
+
+
+@model(tag="kind", validator=validate_event_name)
+class NamespacedEvent(DiscriminatedModel):
+    pass
+```
+
+This accepts `"event.created"` and `"EVENT.created"` without changing their case,
+and rejects `"event_created"` or `"prefix-event.created"`. The same function can
+be passed to `tag_field(validator=validate_event_name)` in an explicit generic
+family. Patterns use Python's `re` syntax and optional integer flags such as
+`re.IGNORECASE`. Slashes are literal characters: `validate_regex(r"/a/g")`
+matches the text `"/a/g"`, whereas `validate_regex(r"a")` requires `"a"`.
+JavaScript regex delimiters and the `g` flag are not interpreted.
+
+The factory compiles the pattern immediately, so invalid patterns raise the
+native `re.error` before any variant is declared. The returned validator uses
+`fullmatch`, requiring the entire value to match, and raises `ValueError` on a
+mismatch. Reusing it reuses the compiled pattern. The family's existing
+non-empty-string requirement still applies even when a pattern accepts empty
+strings.
+
+Custom rules use the same interface and can call the built-in functions:
+
+```python
+def validate_command(value: str) -> None:
+    validate_kebab_case(value)
+    if not value.startswith("cmd-"):
+        raise ValueError("variant must start with 'cmd-'")
+
+
+@model(tag="kind", validator=validate_command)
+class CommandEvent(DiscriminatedModel):
+    pass
+```
+
+Each rule stays with the field's owning family; subclasses cannot replace or
+remove it. In `@model(tag="action", variant="user-event", validator=validate_snake_case)`
+on a subclass of `Event`, the inherited kebab rule checks `"user-event"` for
+`kind`. The new snake rule checks future variants bound to `action`.
+Supplying `validator` without a new `tag` raises `ValueError`; a leaf uses its
+parent's rule through `variant=` alone. Rules are stored with the field and
+preserved across generic specialization and decorator declarations.
 
 ## Specialized model aliases
 
@@ -322,11 +443,14 @@ an explicit parameter under strict checking. Do not use `Request[str]` to mean
   this package; the native type checker determines assignability.
 - `Parent[Literal["tag"]]` selects a concrete tag. Tags must be singleton, non-empty
   string literals; cardinality and empty-string restrictions are checked at runtime.
+  An optional [family-owned validator](#family-owned-variant-validation) checks
+  each bound literal during declaration and assembly.
   Generic consumer annotations such as `Request[T]` leave the family open.
 - Use `kind: Kind = tag_field()` in assignment form. The helper returns a native
   frozen `Field` with a private default factory. Its factory identity identifies
-  tag fields after Pydantic merges and specializes fields; no separate registry
-  or custom metadata type is needed. The assigned default tells Pyright that
+  tag fields after Pydantic merges and specializes fields; optional variant
+  validators are metadata on that same field, without a separate registry.
+  The assigned default tells Pyright that
   constructors can omit the tag, including on an open family: strict Pyright
   accepts `Message[Any](identifier="m")`, but runtime validation rejects its
   missing `kind`. During schema generation, typebind reads the
