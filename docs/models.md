@@ -657,7 +657,8 @@ leaves reach is bound to that family's leaves in the scope:
 
 Results are instances of the declared classes and compare equal to hand-built
 instances. Scope compilation reuses the declared classes' own schemas, validators
-and hooks; it creates no subclasses and modifies no class, so direct
+and hooks; it neither subclasses nor modifies any declared class (an internal
+carrier model only compiles the bound schema), so direct
 `model_validate` outside a scope keeps native behavior. Validation errors are
 titled after the root family. Bound validation and serialization run at native
 discriminated-union speed; `benchmarks/models.py` compares them with a
@@ -665,7 +666,8 @@ hand-written union (`nested_family_to_static_ratio`).
 
 A `bind_variants` annotation whose root family reaches no automatically bound
 field compiles in place, exactly as before. When it does reach one, pass every
-model that declares it to `rebuild_bindings` once its leaves are importable:
+model that declares it to `rebuild_bindings` once its leaves are importable. The
+order of the models passed to one call does not matter:
 
 ```python
 from typing import Annotated
@@ -695,6 +697,14 @@ rebuild; use `build_adapter` instead. If the helper fails, for example because a
 reached family has no variants, the model is first returned to the failing state
 and the error is then re-raised.
 
+Pydantic reuses the compiled schema of a model referenced by another model. Models
+that reference each other and were compiled before a binding container they share
+was assembled keep each other's unassembled copy, which no rebuild can refresh.
+`rebuild_bindings` then raises `TypeError` naming them, as it does for any given
+model still reaching a binding through a model that was not passed. Assemble such
+a shared container with `rebuild_bindings` before defining the recursive models
+that reference it.
+
 Errors raised when a scope is built (at `build_adapter`, or when a binding's model
 is compiled):
 
@@ -713,7 +723,10 @@ existing errors and timing.
 Already-validated instances keep Pydantic's native `revalidate_instances`
 behavior: with the default `"never"`, an instance produced by one adapter passes
 through another adapter unchanged, even if its nested variant is outside that
-adapter's set.
+adapter's set. Dumping such an instance through the narrower adapter serializes
+the nested value with that adapter's union and, as in plain Pydantic, can drop
+its variant-only fields without a warning; dump it with the instance's own
+`model_dump()` or with the adapter that produced it.
 
 ## Recursive family fields
 

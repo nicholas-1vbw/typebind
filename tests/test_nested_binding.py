@@ -425,7 +425,7 @@ class CustomInitLeaf(CustomInit):
 
 def test_reached_family_without_variants_names_the_field() -> None:
     with pytest.raises(
-        ValueError, match=r"No variants supplied for .*ModelConfig.*GenericConfig\.model"
+        ValueError, match=r"No variants supplied for .*ModelConfig.*SessionConfig\.model"
     ):
         build_adapter(SessionConfig, variants=[GenericConfig])
     with pytest.raises(ValueError, match="No variants supplied for .*SessionConfig"):
@@ -433,9 +433,9 @@ def test_reached_family_without_variants_names_the_field() -> None:
 
 
 def test_cycles_through_automatic_fields_are_rejected() -> None:
-    with pytest.raises(TypeError, match=r"LeftLeaf\.right -> RightLeaf\.left .*bind_variants"):
+    with pytest.raises(TypeError, match=r"Left\.right -> Right\.left .*bind_variants"):
         build_adapter(Left, variants=[LeftLeaf, RightLeaf])
-    with pytest.raises(TypeError, match=r"Branch\.kids .*bind_variants"):
+    with pytest.raises(TypeError, match=r"Tree\.kids .*bind_variants"):
         build_adapter(TreeFamily, variants=[Branch])
 
 
@@ -723,7 +723,7 @@ class DecoratedLeaf(DecoratedNode):
 
 
 def test_decorated_class_name_self_reference_is_a_cycle() -> None:
-    with pytest.raises(TypeError, match=r"DecoratedLeaf\.children .*bind_variants"):
+    with pytest.raises(TypeError, match=r"DecoratedNode\.children .*bind_variants"):
         build_adapter(DecoratedNode, variants=[DecoratedLeaf])
 
 
@@ -1068,3 +1068,149 @@ def test_explicit_generic_identity_families_bind_and_round_trip() -> None:
     assert dumped == {"canvas": "paper", "shape": {"kind": "square", "side": 2.0}}
     assert adapter.validate_python(dumped) == value
     assert adapter.validate_json(adapter.dump_json(value, warnings="error")) == value
+
+
+def test_rebuild_bindings_order_does_not_matter() -> None:
+    class OuterFirst(BaseModel):
+        job: RunJob
+
+    class OuterLast(BaseModel):
+        job: RunJob
+
+    data = {"job": {"job": "run", "primary": ANTHROPIC, "pinned": RAW}}
+    for outer, order in ((OuterFirst, "outer-first"), (OuterLast, "outer-last")):
+        models: list[type[BaseModel]] = (
+            [outer, RunJob] if order == "outer-first" else [RunJob, outer]
+        )
+        RunJob.model_rebuild(force=True)
+        outer.model_rebuild(force=True)
+        rebuild_bindings(*models)
+        value = outer.model_validate(data)
+        assert type(value.job.pinned.model) is OpenAIModelConfig
+
+
+@model(tag="later")
+class LaterHolder(DiscriminatedModel):
+    provider: "LaterFamily"
+
+
+@model(variant="h")
+class LaterHolderLeaf(LaterHolder):
+    pass
+
+
+@model(tag="provider")
+class LaterFamily(DiscriminatedModel):
+    model_id: str
+
+
+@model(variant="openai")
+class LaterOpenAI(LaterFamily):
+    reasoning_effort: str | None = None
+
+
+def test_string_annotations_resolved_after_class_creation_are_bound() -> None:
+    # The leaf is not rebuilt first: the scope evaluates its string annotation.
+    adapter = build_adapter(LaterHolder, variants=[LaterHolderLeaf, LaterOpenAI])
+    value = adapter.validate_python({"later": "h", "provider": OPENAI})
+    assert type(value.provider) is LaterOpenAI
+
+
+def test_forced_rebuild_of_an_assembled_inherited_container_fails_loudly() -> None:
+    class Parent(BaseModel):
+        name: str = "parent"
+
+    class Envelope(Parent):
+        config: Annotated[SessionConfig, bind_variants([GenericConfig, OpenAIModelConfig])]
+
+    rebuild_bindings(Envelope)
+    assert type(Envelope.model_validate({"config": RAW}).config.model) is OpenAIModelConfig
+    Envelope.model_rebuild(force=True)
+    with pytest.raises(ValidationError) as error:
+        Envelope.model_validate({"config": RAW})
+    assert_unassembled(error.value)
+
+
+def test_python_mode_instance_round_trip() -> None:
+    adapter = holder_adapter()
+    value = adapter.validate_python(
+        {
+            "holder": "full",
+            "tools": [{"tool": "search", "model": OPENAI}],
+            "pair": [ANTHROPIC, {"tool": "search"}],
+            "optional": OPENAI,
+            "mixed": OPENAI,
+            "named": {"x": OPENAI},
+            "shape": {"kind": "circle", "radius": 2.0},
+        }
+    )
+    assert adapter.validate_python(value.model_dump(warnings="error")) == value
+
+
+def test_mixed_union_rejects_unknown_tags() -> None:
+    adapter = holder_adapter()
+    with pytest.raises(ValidationError, match="does not match any of the expected tags"):
+        adapter.validate_python({"holder": "full", "mixed": {"provider": "x", "model_id": "m"}})
+
+
+class CycleA(BaseModel):
+    value: Annotated[SessionConfig, bind_variants([GenericConfig, OpenAIModelConfig])]
+    other: "CycleB | None" = None
+
+
+class CycleB(BaseModel):
+    other: CycleA | None = None
+
+
+CycleA.model_rebuild()
+
+
+@pytest.mark.parametrize("order", ["a-first", "b-first"])
+def test_rebuild_bindings_assembles_mutually_recursive_containers(order: str) -> None:
+    CycleA.model_rebuild(force=True)
+    CycleB.model_rebuild(force=True)
+    models: list[type[BaseModel]] = [CycleA, CycleB] if order == "a-first" else [CycleB, CycleA]
+    rebuild_bindings(*models)
+    value = CycleB.model_validate({"other": {"value": RAW, "other": {"other": {"value": RAW}}}})
+    assert value.other is not None
+    assert type(value.other.value.model) is OpenAIModelConfig
+    CycleB.model_json_schema()
+
+
+def test_rebuild_bindings_reports_containers_it_cannot_assemble() -> None:
+    class Shared(BaseModel):
+        value: Annotated[SessionConfig, bind_variants([GenericConfig, OpenAIModelConfig])]
+
+    class PeerA(BaseModel):
+        peer: "PeerB | None" = None
+        child: Shared | None = None
+
+    class PeerB(BaseModel):
+        peer: PeerA | None = None
+        child: Shared | None = None
+
+    PeerA.model_rebuild(_types_namespace={"PeerB": PeerB})
+    with pytest.raises(TypeError, match=r"could not assemble .*PeerA.*PeerB"):
+        rebuild_bindings(Shared, PeerA, PeerB)
+    with pytest.raises(ValidationError) as error:
+        PeerA.model_validate({"child": {"value": RAW}})
+    assert_unassembled(error.value)
+
+    class ReadyShared(BaseModel):
+        value: Annotated[SessionConfig, bind_variants([GenericConfig, OpenAIModelConfig])]
+
+    rebuild_bindings(ReadyShared)
+
+    class ReadyA(BaseModel):
+        peer: "ReadyB | None" = None
+        child: ReadyShared | None = None
+
+    class ReadyB(BaseModel):
+        peer: ReadyA | None = None
+        child: ReadyShared | None = None
+
+    ReadyA.model_rebuild(_types_namespace={"ReadyB": ReadyB})
+    rebuild_bindings(ReadyA, ReadyB)
+    value = ReadyA.model_validate({"peer": {"child": {"value": RAW}}})
+    assert value.peer is not None and value.peer.child is not None
+    assert type(value.peer.child.value.model) is OpenAIModelConfig

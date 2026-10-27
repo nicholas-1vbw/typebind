@@ -28,12 +28,14 @@ from pydantic import (
     ConfigDict,
     Field,
     GetCoreSchemaHandler,
+    GetJsonSchemaHandler,
     GetPydanticSchema,
     TypeAdapter,
     create_model,
     model_validator,
 )
 from pydantic.fields import FieldInfo
+from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema, PydanticCustomError, core_schema
 
 # A declaration-style marker, stored only on generated fields. Tag names and
@@ -194,8 +196,8 @@ def _with_tag_defaults(schema: CoreSchema, model: type[DiscriminatedModel]) -> C
 class _ScopeMarker:
     """Base of annotation metadata that already decides a family field's binding.
 
-    Explicit bindings and the internal references of a compiled scope derive from
-    it, so annotation walks treat the field as declared rather than open.
+    Explicit bindings derive from it, so annotation walks treat the field as
+    declared rather than open.
     """
 
 
@@ -946,6 +948,14 @@ def _closed(node: Any) -> tuple[_Binding, Any] | None:
     return None
 
 
+def _declaring(model: type, name: str) -> type | None:
+    """The most basic model class in the MRO that declares field ``name``."""
+    for base in reversed(model.__mro__):
+        if issubclass(base, BaseModel) and base is not BaseModel and name in base.model_fields:
+            return base
+    return None
+
+
 class _Scan:
     """Positions reached from one family union, with their Model.field paths."""
 
@@ -954,6 +964,7 @@ class _Scan:
         self.positions: list[tuple[type[DiscriminatedModel], str]] = []
         self.closed: list[tuple[_Binding, Any]] = []
         self.visited: set[str] = set()
+        self.owner: type | None = None
 
     def walk(self, node: Any, where: str) -> None:
         if isinstance(node, list | tuple):
@@ -980,11 +991,14 @@ class _Scan:
                 self.walk(self.definitions[ref], where)
             return
         if kind == "model":
-            self.walk(item["schema"], cast(type, item["cls"]).__qualname__)
+            self.owner = cast(type, item["cls"])
+            self.walk(item["schema"], self.owner.__qualname__)
             return
         if kind == "model-fields":
+            owner = self.owner
             for name, field in cast(dict[str, Any], item["fields"]).items():
-                self.walk(field, f"{where}.{name}")
+                declaring = _declaring(owner, name) if owner is not None else None
+                self.walk(field, f"{declaring.__qualname__ if declaring else where}.{name}")
             return
         for key, value in item.items():
             if key == "serialization":
@@ -1197,23 +1211,25 @@ def _reject_cycles(families: list[type[DiscriminatedModel]], scans: list[_Scan])
 _active: ContextVar[_Compilation | None] = ContextVar("typebind_compilation", default=None)
 
 
+_UNASSEMBLED_MESSAGE = (
+    "The binding for {family} reaches nested open families and was not compiled by "
+    "typebind.rebuild_bindings(); pass its model to rebuild_bindings() or use build_adapter()"
+)
+
+
+def _unassembled_context(root: object) -> dict[str, str]:
+    return {"family": root.__qualname__ if isinstance(root, type) else repr(root)}
+
+
 def _unassembled_schema(binding: _Binding, root: object) -> CoreSchema:
     """A field that always fails, so an unassembled binding never parses base classes."""
-    context = {"family": root.__qualname__ if isinstance(root, type) else repr(root)}
-    template = (
-        "The binding for {family} reaches nested open families and was not compiled by "
-        "typebind.rebuild_bindings(); pass its model to rebuild_bindings() or use build_adapter()"
-    )
+    context = _unassembled_context(root)
 
     def validate(value: object, info: core_schema.ValidationInfo) -> object:
-        raise PydanticCustomError(_UNASSEMBLED, template, context)
-
-    def json_schema(schema: CoreSchema, handler: Any) -> Any:
-        raise TypeError(template.format(**context))
+        raise PydanticCustomError(_UNASSEMBLED, _UNASSEMBLED_MESSAGE, context)
 
     return core_schema.with_info_plain_validator_function(
-        validate,
-        metadata={"pydantic_js_functions": [json_schema], _BINDING_KEY: (binding, root)},
+        validate, metadata={_BINDING_KEY: (binding, root)}
     )
 
 
@@ -1234,6 +1250,13 @@ class _Binding(_ScopeMarker):
             return False
         seen.add((self, family))
         return any(_model_reaches(leaf, seen) for leaf in _leaves(family, self.branches))
+
+    def json_schema(self, schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Refuse to describe an unassembled field rather than describe base classes."""
+        closed = _closed(schema)
+        if closed is not None:
+            raise TypeError(_UNASSEMBLED_MESSAGE.format(**_unassembled_context(closed[1])))
+        return handler(schema)
 
     def core_schema(self, source: Any, handler: GetCoreSchemaHandler) -> CoreSchema:
         union = _union_for(source, self.branches)
@@ -1275,7 +1298,8 @@ def bind_variants(variants: Iterable[type[DiscriminatedModel]]) -> GetPydanticSc
     schema generation and its native restrictions, including tag-field validators.
     The snapshot is independent of subsequent changes to the input iterable.
     """
-    return GetPydanticSchema(_Binding(variants).core_schema)
+    binding = _Binding(variants)
+    return GetPydanticSchema(binding.core_schema, binding.json_schema)
 
 
 def _carrier(root: type[DiscriminatedModel], schema: CoreSchema) -> type[BaseModel]:
@@ -1337,28 +1361,76 @@ def build_adapter[T: DiscriminatedModel](
     return cast(TypeAdapter[T], TypeAdapter(_carrier(root, schema)))
 
 
+def _unassembled(node: Any) -> int:
+    """The number of unassembled bindings left in a compiled schema."""
+    if isinstance(node, list | tuple):
+        return sum(_unassembled(item) for item in cast(list[Any], node))
+    if not isinstance(node, dict):
+        return 0
+    item = cast(dict[str, Any], node)
+    if _closed(item) is not None:
+        return 1
+    count = 0
+    for key, value in item.items():
+        if key in _MAP_KEYS and isinstance(value, dict):
+            count += sum(_unassembled(entry) for entry in cast(dict[str, Any], value).values())
+        elif key not in _DATA_KEYS:
+            count += _unassembled(value)
+    return count
+
+
+def _rebuild_one(model: type[BaseModel]) -> None:
+    token = _active.set(_Compilation())
+    try:
+        model.model_rebuild(force=True)
+    except Exception as error:
+        _active.reset(token)
+        token = None
+        try:
+            model.model_rebuild(force=True)
+        except Exception as restore_error:
+            error.add_note(f"typebind could not restore {_model_name(model)}: {restore_error!r}")
+        raise
+    finally:
+        if token is not None:
+            _active.reset(token)
+
+
 def rebuild_bindings(*models: type[BaseModel]) -> None:
     """Compile models whose ``bind_variants`` fields reach nested open families.
 
-    Each model is rebuilt with its bindings bound. A model compiled any other way
-    keeps fields that raise ``typebind_unassembled``. If compiling a model fails,
-    it is first returned to that failing state, then the error is re-raised.
-    Models without such bindings are simply rebuilt.
+    Each model is rebuilt with its bindings bound; the order of ``models`` does not
+    matter. A model that uses another given model as a field type reuses that
+    model's compiled schema, so models still holding unassembled bindings after a
+    pass are rebuilt again while the number of such bindings keeps decreasing. A
+    model compiled any other way keeps fields that raise ``typebind_unassembled``.
+    If compiling a model fails, it is first returned to that failing state, then
+    the error is re-raised. Models without such bindings are simply rebuilt.
+
+    If rebuilding stops making progress while given models still hold unassembled
+    bindings, TypeError names them. This happens when they reach a binding through
+    a model that was not passed, or through mutually recursive models compiled
+    before a binding container they share was assembled; Pydantic reuses those
+    compiled schemas, so assemble such a container before defining them.
     """
-    for model in models:
-        token = _active.set(_Compilation())
-        try:
-            model.model_rebuild(force=True)
-        except BaseException as error:
-            _active.reset(token)
-            token = None
-            try:
-                model.model_rebuild(force=True)
-            except Exception as restore_error:
-                error.add_note(
-                    f"typebind could not restore {_model_name(model)}: {restore_error!r}"
-                )
-            raise
-        finally:
-            if token is not None:
-                _active.reset(token)
+    pending = list(models)
+    left: int | None = None
+    while pending:
+        for model in pending:
+            _rebuild_one(model)
+        counts = {
+            model: _unassembled(vars(model).get("__pydantic_core_schema__")) for model in pending
+        }
+        total = sum(counts.values())
+        pending = [model for model in pending if counts[model]]
+        # Recursive containers may need several passes; stop once one binds nothing more.
+        if pending and left is not None and total >= left:
+            names = ", ".join(_model_name(model) for model in pending)
+            raise TypeError(
+                f"rebuild_bindings() could not assemble {names}: they still reach an "
+                "unassembled binding through another model's compiled schema. Pass every "
+                "model whose bindings they reach. Pydantic reuses compiled schemas of "
+                "mutually recursive models, so a binding container shared by them must be "
+                "assembled with rebuild_bindings() before those models are defined."
+            )
+        left = total
