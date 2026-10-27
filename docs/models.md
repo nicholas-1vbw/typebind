@@ -175,7 +175,8 @@ as shown in [recursive family fields](#recursive-family-fields).
 A class-name self-reference resolved during the original class body points to
 that original class, not its decorated replacement; nested values then validate
 as the undecorated class. This is not a supported recursive declaration form for
-decorators. Explicit generics and ordinary Pydantic unions remain available when
+decorators. Within an adapter or binding, such a reference is resolved to the
+decorated family and rejected as a cycle through automatically bound fields. Explicit generics and ordinary Pydantic unions remain available when
 that distinction matters. Custom class-construction side effects may run again
 for the native generated subclass; typebind adds no custom metaclass.
 
@@ -549,13 +550,20 @@ parallel tag registry, cached path, or annotation-result cache to synchronize.
 For nested fields, `bind_variants` captures the supplied leaves and returns
 Pydantic's `GetPydanticSchema` metadata. The metadata asks Pydantic to generate the
 same nested union at the explicitly annotated field. Containers then use normal
-constructors, `model_validate`, `model_dump_json`, and `TypeAdapter`. Existing
-unbound containers are not rewritten; a plain `Message[Any]` annotation keeps
-its native Pydantic meaning and does not dispatch to concrete leaves.
-It also serializes according to the declared family schema: a `Query` stored in
-a bare `Message[Any]` field can lose `method`, `sequence`, and `expression` on
-export. Use an explicit union or `bind_variants` when those subtype fields must
-survive a round trip.
+constructors, `model_validate`, `model_dump_json`, and `TypeAdapter`. Fields
+declared as open families inside the supplied leaves are bound as well; see
+[nested families](#nested-families). Outside any adapter or binding, a plain
+`Message[Any]` annotation keeps its native Pydantic meaning and does not dispatch
+to concrete leaves: direct `model_validate` parses the declared family and ignores
+variant fields under Pydantic's default `extra="ignore"` (or rejects them with
+`extra="forbid"` on the family base).
+
+Fields declared on family classes serialize open-family values with their runtime
+class, like Pydantic's `SerializeAsAny`, so a `Query` stored in a `Message[Any]`
+field keeps `method`, `sequence`, and `expression` on export. Fields declared on
+ordinary `BaseModel` containers keep native serialization; annotate them with
+`SerializeAsAny[...]`, an explicit union or `bind_variants` when subtype fields
+must survive a round trip.
 
 Lists, dictionaries, optional fields, and independent family bindings are tested.
 Known recursive trees can declare recursive native discriminated unions directly.
@@ -565,8 +573,8 @@ that changes a routing tag is not supported by this binding mechanism.
 
 Bindings and adapters capture independent variant snapshots. Their local dispatch
 tables and compiled schemas are derived artifacts, not separate declarations. Build a new binding or
-adapter when the variant set changes. No already compiled validators, serializers,
-or adapter attributes are patched. Mutating model fields after declaration is outside this package's
+adapter when the variant set changes. Declared classes, their compiled validators
+and serializers, and adapter attributes are not patched. Mutating model fields after declaration is outside this package's
 contract; this does not provide live schema synchronization. Native
 `TypeAdapter.rebuild(force=True)`, JSON Schema generation,
 validation, and serialization operate on the actual union annotation.
@@ -580,13 +588,142 @@ Unchecked `model_construct()` does not execute the compiled schema and must supp
 tags explicitly; the declaration factory raises if called rather than returning
 an unresolved sentinel. It is not a persistence/deserialization API.
 
+## Nested families
+
+A family's leaves often declare fields typed as another open family, supplied by
+different packages and known only at assembly time:
+
+```python
+from typebind import IdentityDiscriminatedModel, build_adapter, model
+
+
+@model(tag="provider")
+class ModelConfig(IdentityDiscriminatedModel):
+    model_id: str
+
+
+@model(variant="openai")
+class OpenAIModelConfig(ModelConfig):
+    reasoning_effort: str | None = None
+
+
+@model(tag="harness_type")
+class SessionConfig(IdentityDiscriminatedModel):
+    model: ModelConfig
+    fallbacks: list[ModelConfig] = []
+
+
+@model(variant="generic")
+class GenericConfig(SessionConfig):
+    pass
+
+
+adapter = build_adapter(SessionConfig, variants=[GenericConfig, OpenAIModelConfig])
+config = adapter.validate_python(
+    {
+        "harness_type": "generic",
+        "model": {"provider": "openai", "model_id": "m", "reasoning_effort": "low"},
+    }
+)
+assert type(config) is GenericConfig
+assert type(config.model) is OpenAIModelConfig
+assert config.model_dump()["model"]["reasoning_effort"] == "low"
+```
+
+Each `build_adapter` call and each `bind_variants` annotation is a **scope**. It
+receives one flat collection of tagged leaves, and every open-family field its
+leaves reach is bound to that family's leaves in the scope:
+
+- Fields inside `list`, `tuple`, `set`/`frozenset` (for hashable, `frozen=True`
+  families), `Optional` and other unions, and `dict` values are reached, as are
+  fields of ordinary `BaseModel` models along the way. Every family member of a
+  union is bound, including unions mixing families with other types such as
+  `ModelConfig | int`. Intermediate families and open views such as `Family[Any]`
+  bind their own subtree.
+- Within one scope a family has one variant set at every position. Adapters or
+  bindings with different sets for the same family coexist in one process.
+- Tagged leaves of families the scope never reaches are ignored, so one discovery
+  selection can cover several families. Open family bases are not variants and
+  are still rejected.
+- A field narrowed in its declaration keeps it: a concrete variant, an explicit
+  union, or a `bind_variants` annotation. A `bind_variants` field is a closed
+  scope; its own leaves must cover its subtree and enclosing scopes do not rebind
+  inside it.
+- Families must not form a cycle through automatically bound fields. Recursive
+  structures use an explicit `bind_variants` annotation, as shown in
+  [recursive family fields](#recursive-family-fields). Recursion through a
+  concrete variant, an ordinary `BaseModel`, or `Self` is not a family cycle and
+  keeps native recursive references.
+
+Results are instances of the declared classes and compare equal to hand-built
+instances. Scope compilation reuses the declared classes' own schemas, validators
+and hooks; it creates no subclasses and modifies no class, so direct
+`model_validate` outside a scope keeps native behavior. Validation errors are
+titled after the root family. Bound validation and serialization run at native
+discriminated-union speed; `benchmarks/models.py` compares them with a
+hand-written union (`nested_family_to_static_ratio`).
+
+A `bind_variants` annotation whose root family reaches no automatically bound
+field compiles in place, exactly as before. When it does reach one, pass every
+model that declares it to `rebuild_bindings` once its leaves are importable:
+
+```python
+from typing import Annotated
+
+from pydantic import BaseModel
+from typebind import bind_variants, rebuild_bindings
+
+
+class Envelope(BaseModel):
+    config: Annotated[SessionConfig, bind_variants([GenericConfig, OpenAIModelConfig])]
+
+
+rebuild_bindings(Envelope)
+```
+
+Compiled any other way, such a field always fails: validation raises a
+`ValidationError` of type `typebind_unassembled` naming the family and
+`rebuild_bindings`, and JSON Schema generation raises `TypeError`. It never parses
+base classes silently. This applies to a container defined or force-rebuilt
+outside the helper, to another container reusing the same binding object, and to
+a model that referenced the container before it was assembled; pass each to
+`rebuild_bindings`. Models defined after their container was assembled reuse its
+compiled validator. A `TypeAdapter` created before the helper ran keeps its
+snapshot; recreate it or call its `rebuild(force=True)`. A standalone
+`TypeAdapter(Annotated[Family, bind_variants(...)])` of this kind has no model to
+rebuild; use `build_adapter` instead. If the helper fails, for example because a
+reached family has no variants, the model is first returned to the failing state
+and the error is then re-raised.
+
+Errors raised when a scope is built (at `build_adapter`, or when a binding's model
+is compiled):
+
+| Condition | Exception |
+|---|---|
+| A reached open family has no variants; the message names the family and `Model.field` | `ValueError` |
+| No variants for the scope root (`No variants supplied for ...`) | `ValueError` |
+| A cycle through automatically bound fields, listed as `Model.field` steps | `TypeError` |
+| A model on a rebound path defines a custom `__init__` | `TypeError` |
+
+A custom `__init__` is rejected because Pydantic constructs such a model through
+its own validator, which would bypass the scope. Remove the initializer or narrow
+the field in its declaration. Duplicate tags and non-leaf variants keep their
+existing errors and timing.
+
+Already-validated instances keep Pydantic's native `revalidate_instances`
+behavior: with the default `"never"`, an instance produced by one adapter passes
+through another adapter unchanged, even if its nested variant is outside that
+adapter's set.
+
 ## Recursive family fields
 
 To accept sibling variants in a recursive field, bind the family rather than
 `Self`. Both declaration styles below use the same binding and rebuild sequence.
 Each example is a standalone module. Put the future import at the top
 so the binding name can be defined after both leaves exist; then rebuild the
-leaves before constructing instances or adapters.
+leaves before constructing instances or adapters. When the leaves also declare
+fields typed as another open family, include that family's leaves in the binding
+and call `rebuild_bindings(A, B)` instead of rebuilding the leaves directly.
 
 ### Explicit generic declarations
 
@@ -758,8 +895,9 @@ family. Default generation uses the public core-schema hook and native
 `with_default_schema`; union generation uses public Pydantic APIs. No private
 compiler options or custom generic-class creation are used. The supported Pydantic
 range is specified in `pyproject.toml`; Pydantic selects its matching pydantic-core
-version. The minimum is 2.11.2: earlier 2.11 releases fail nested discriminator
-assembly. On versions without `exclude_if`, that field option has no exclusion
+version. The minimum is 2.13: nested family binding compiles bound schemas with
+`model_rebuild(force=True)`, which since 2.13 compiles nested models from their
+schema instead of reusing their prebuilt validators (pydantic/pydantic#12689). On versions without `exclude_if`, that field option has no exclusion
 policy to check. When changing dependencies, verify these compatibility boundaries:
 
 - Native `create_model` preserves decorated payload fields, validators, `Self`,
@@ -768,6 +906,9 @@ policy to check. When changing dependencies, verify these compatibility boundari
   Literal tags, including type aliases.
 - Core-schema generation still replaces the tag factory with native defaults and
   preserves validator wrappers, nested references, and model rebuild behavior.
+- A forced rebuild still compiles nested models from the supplied schema, for both
+  bases; scope compilation relies on it, and the nested-family tests cover it on
+  the minimum and locked versions.
 - For the identity subclass, the inherited `model_validator(mode="after")` still marks bound tags through
   the public `model_fields_set` property before ordinary subclass after-validators
   run; mixin validators retain native MRO ordering. Nested validation can run

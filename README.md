@@ -59,8 +59,11 @@ assert type(adapter.validate_python({"kind": "ping", "identifier": "p"})) is Pin
 print(wire.decode())  # {"kind":"query","identifier":"q","expression":"hello"}
 ```
 
-`build_adapter` returns a native Pydantic `TypeAdapter`. For nested model fields,
-use [`bind_variants`](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#consumer-types).
+`build_adapter` returns a native Pydantic `TypeAdapter`. Fields typed as another
+open family dispatch through the leaves you supply in the same call; see
+[nested families](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#nested-families).
+For container model fields, use
+[`bind_variants`](https://github.com/nicholas-1vbw/typebind/blob/main/docs/models.md#consumer-types).
 Import public APIs from `typebind`; underscore-prefixed modules are internal.
 
 Family authors can constrain variant values with `@model(tag="kind", validator=validate_kebab_case)`

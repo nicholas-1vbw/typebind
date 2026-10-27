@@ -185,6 +185,14 @@ scopes, but combining them in the same family branch raises an error; neither
 group order nor `extra_variants` overrides a discovered implementation. There is
 no second tag registry or change to automatic tag defaults.
 
+An adapter binds every family its leaves reach, including families nested in
+fields, and ignores tagged leaves of families it never reaches. A single selection
+can therefore cover several families, for example `family=DiscriminatedModel`
+over groups that publish leaves, or per-family selections can be combined to
+restrict a nested family. Open family bases are not variants: a selection that
+contains one, whether published or passed as an extra type, is still rejected. See
+[nested families](models.md#nested-families).
+
 ### One discovery snapshot, independently selected scopes
 
 ```python
