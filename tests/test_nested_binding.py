@@ -448,12 +448,14 @@ def test_custom_initializers_on_rebound_paths_are_rejected() -> None:
 
 
 def test_bindings_without_nested_families_stay_eager() -> None:
-    adapter = TypeAdapter(Annotated[ModelConfig, bind_variants([OpenAIModelConfig, GenericConfig])])
+    adapter = TypeAdapter[ModelConfig](
+        Annotated[ModelConfig, bind_variants([OpenAIModelConfig, GenericConfig])]
+    )
     assert type(adapter.validate_python(OPENAI)) is OpenAIModelConfig
 
 
 def test_standalone_adapter_with_nested_families_raises() -> None:
-    adapter = TypeAdapter(
+    adapter = TypeAdapter[SessionConfig](
         Annotated[SessionConfig, bind_variants([GenericConfig, OpenAIModelConfig])]
     )
     with pytest.raises(ValidationError) as error:
@@ -827,7 +829,7 @@ class NamedRootLeaf(NamedRoot):
 
 
 def test_literal_tags_are_not_type_references() -> None:
-    adapter = TypeAdapter(Annotated[NamedRoot, bind_variants([NamedRootLeaf])])
+    adapter = TypeAdapter[NamedRoot](Annotated[NamedRoot, bind_variants([NamedRootLeaf])])
     assert type(adapter.validate_python({"kind": "NamedRoot", "value": 1})) is NamedRootLeaf
 
 
