@@ -15,6 +15,7 @@ from ._models import (
     bind_variants,
     build_adapter,
     model,
+    rebuild_bindings,
     tag_field,
 )
 from ._validators import (
@@ -37,6 +38,7 @@ __all__ = [
     "IdentityDiscriminatedModel",
     "bind_variants",
     "build_adapter",
+    "rebuild_bindings",
     "discover_variants",
     "select_variants",
     "tag_field",

@@ -185,6 +185,57 @@ assert family_adapter.validate_json(wire) == query
 assert "kind" not in query.model_dump(exclude_unset=True)
 assert envelope_adapter.validate_json(envelope_adapter.dump_json(envelope)) == envelope
 
+
+# Nested families: a field typed as an open family, bound at assembly time,
+# compared with a hand-written static discriminated union over the same leaves.
+@model(tag="provider")
+class Provider(DiscriminatedModel):
+    model_id: str
+
+
+@model(variant="first")
+class FirstProvider(Provider):
+    effort: str | None = None
+
+
+@model(variant="second")
+class SecondProvider(Provider):
+    thinking: bool = False
+
+
+@model(tag="harness")
+class Session(DiscriminatedModel):
+    provider: Provider
+
+
+@model(variant="bound")
+class BoundSession(Session):
+    pass
+
+
+@model(tag="harness")
+class StaticRoot(DiscriminatedModel):
+    provider: Annotated[FirstProvider | SecondProvider, Field(discriminator="provider")]
+
+
+@model(variant="static")
+class StaticSession(StaticRoot):
+    pass
+
+
+bound_adapter = build_adapter(Session, variants=[BoundSession, FirstProvider, SecondProvider])
+static_adapter = build_adapter(StaticRoot, variants=[StaticSession])
+bound_wire = bound_adapter.dump_json(
+    BoundSession(provider=FirstProvider(model_id="m", effort="low"))
+)
+static_wire = static_adapter.dump_json(
+    StaticSession(provider=FirstProvider(model_id="m", effort="low"))
+)
+bound_session = bound_adapter.validate_json(bound_wire)
+static_session = static_adapter.validate_json(static_wire)
+assert type(bound_session.provider) is FirstProvider
+assert bound_adapter.validate_json(bound_adapter.dump_json(bound_session)) == bound_session
+
 native_query = NativeQuery(value=1)
 decorated_query = DecoratedQuery(value=1)
 envelope_wire = envelope_adapter.dump_json(envelope)
@@ -244,6 +295,10 @@ cases: dict[str, Callable[[], object]] = {
         envelope_adapter.dump_json(envelope, exclude_unset=True, warnings="error")
     ),
     "family_validate_json": lambda: family_adapter.validate_json(wire),
+    "nested_family_validate_json": lambda: bound_adapter.validate_json(bound_wire),
+    "nested_static_validate_json": lambda: static_adapter.validate_json(static_wire),
+    "nested_family_dump_json": lambda: bound_adapter.dump_json(bound_session),
+    "nested_static_dump_json": lambda: static_adapter.dump_json(static_session),
     "nested_json_roundtrip": lambda: envelope_adapter.validate_json(
         envelope_adapter.dump_json(envelope, warnings="error")
     ),
@@ -318,6 +373,10 @@ print(
             "identity_to_marked_explicit_ratio": {
                 name: medians[f"identity_{name}_explicit"] / medians[f"marked_{name}_explicit"]
                 for name in ("single", "multi", "alias_single", "alias_multi")
+            },
+            "nested_family_to_static_ratio": {
+                name: medians[f"nested_family_{name}"] / medians[f"nested_static_{name}"]
+                for name in ("validate_json", "dump_json")
             },
             "omit_to_explicit_ratio": {
                 name: medians[f"{name}_omit"] / medians[f"{name}_explicit"]
